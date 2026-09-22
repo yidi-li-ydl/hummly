@@ -1,32 +1,42 @@
 "use client";
 
 import { useEffect, useState, useRef, useMemo } from "react";
-import { renderMix, downloadWav } from "@/lib/audio/mixer";
+import { renderMix, downloadWav, previewMelody, stopPreview } from "@/lib/audio/mixer";
 import { snapToGrid } from "@/lib/audio/noteQuantizer";
 import { suggestNextPhrase } from "@/lib/audio/melodySuggester";
-import type { QuantizedNote, ChordProgression, DrumStyle, KeyResult } from "@/lib/types";
+import type { ChordInstrument, MelodyVoice, MixVolumes, QuantizedNote, ChordProgression, DrumStyle, KeyResult, PitchReading, VoicePcm } from "@/lib/types";
 
 interface Props {
   notes: QuantizedNote[];
   chords: ChordProgression;
   drums: DrumStyle;
+  bpm: number;
+  beatsPerBar: number;
   detectedKey: KeyResult;
+  voicePcm: VoicePcm | null;
+  pitchReadings: PitchReading[];
+  chordInstrument: ChordInstrument;
+  melodyVoice: MelodyVoice;
+  onMelodyVoiceChange: (voice: MelodyVoice) => void;
   onStartOver: () => void;
 }
 
-export default function MixStep({ notes, chords, drums, detectedKey, onStartOver }: Props) {
+export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, melodyVoice, onMelodyVoiceChange, onStartOver }: Props) {
   const [status, setStatus] = useState<"rendering" | "ready" | "error">("rendering");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [mixUrl, setMixUrl] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [previewingSuggested, setPreviewingSuggested] = useState(false);
+  const [renderKey, setRenderKey] = useState(0);
+  const [volumes, setVolumes] = useState<MixVolumes>({ melody: 1, chords: 1, drums: 1 });
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const hasRendered = useRef(false);
 
   // Snap melody to beat grid and generate suggested continuation
-  const snappedNotes = useMemo(() => snapToGrid(notes, drums.bpm), [notes, drums.bpm]);
+  const snappedNotes = useMemo(() => snapToGrid(notes, bpm), [notes, bpm]);
   const suggested = useMemo(
-    () => suggestNextPhrase(snappedNotes, detectedKey, drums.bpm),
-    [snappedNotes, detectedKey, drums.bpm]
+    () => suggestNextPhrase(snappedNotes, detectedKey, bpm),
+    [snappedNotes, detectedKey, bpm]
   );
 
   useEffect(() => {
@@ -35,7 +45,11 @@ export default function MixStep({ notes, chords, drums, detectedKey, onStartOver
 
     async function render() {
       try {
-        const { url } = await renderMix(snappedNotes, chords, drums, suggested);
+        const { url } = await renderMix(
+          snappedNotes, chords, drums, suggested, bpm,
+          voicePcm ?? undefined, pitchReadings, detectedKey,
+          chordInstrument, beatsPerBar, melodyVoice, volumes
+        );
         setMixUrl(url);
         setStatus("ready");
       } catch (err) {
@@ -46,7 +60,8 @@ export default function MixStep({ notes, chords, drums, detectedKey, onStartOver
     }
 
     render();
-  }, [snappedNotes, chords, drums, suggested]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderKey]);
 
   useEffect(() => {
     return () => {
@@ -74,6 +89,36 @@ export default function MixStep({ notes, chords, drums, detectedKey, onStartOver
 
   const handleDownload = () => {
     if (mixUrl) downloadWav(mixUrl);
+  };
+
+  const handlePreviewSuggested = async () => {
+    if (previewingSuggested) {
+      stopPreview();
+      setPreviewingSuggested(false);
+      return;
+    }
+    setPreviewingSuggested(true);
+    await previewMelody(suggested);
+    setPreviewingSuggested(false);
+  };
+
+  const triggerReRender = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    setIsPlaying(false);
+    if (mixUrl) URL.revokeObjectURL(mixUrl);
+    setMixUrl(null);
+    setStatus("rendering");
+    hasRendered.current = false;
+    setRenderKey((k) => k + 1);
+  };
+
+  const handleMelodyVoiceToggle = (voice: MelodyVoice) => {
+    if (voice === melodyVoice) return;
+    onMelodyVoiceChange(voice);
+    triggerReRender();
   };
 
   if (status === "rendering") {
@@ -107,8 +152,58 @@ export default function MixStep({ notes, chords, drums, detectedKey, onStartOver
       <div className="text-center mb-2">
         <h2 className="text-lg font-semibold gradient-text">Your Demo is Ready!</h2>
         <p className="text-text-secondary text-xs mt-1">
-          {chords.name} chords + {drums.name} drums @ {drums.bpm} BPM
+          {chords.name} chords + {drums.name} drums @ {bpm} BPM
         </p>
+      </div>
+
+      {/* Melody voice toggle */}
+      <div className="flex rounded-lg overflow-hidden border border-surface-card">
+        <button
+          onClick={() => handleMelodyVoiceToggle("real")}
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            melodyVoice === "real"
+              ? "bg-neon-purple text-white"
+              : "bg-surface-card text-text-secondary hover:text-text-primary"
+          }`}
+        >
+          Real Voice
+        </button>
+        <button
+          onClick={() => handleMelodyVoiceToggle("piano")}
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            melodyVoice === "piano"
+              ? "bg-neon-purple text-white"
+              : "bg-surface-card text-text-secondary hover:text-text-primary"
+          }`}
+        >
+          Piano
+        </button>
+      </div>
+
+      {/* Volume sliders */}
+      <div className="w-full rounded-xl bg-surface-card border border-surface-card p-4">
+        <p className="text-xs text-text-secondary mb-3">Mix Levels</p>
+        {(["melody", "chords", "drums"] as const).map((track) => (
+          <div key={track} className="flex items-center gap-3 mb-2 last:mb-0">
+            <span className="text-xs text-text-secondary w-14 capitalize">{track}</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={volumes[track]}
+              onChange={(e) =>
+                setVolumes((v) => ({ ...v, [track]: parseFloat(e.target.value) }))
+              }
+              onMouseUp={triggerReRender}
+              onTouchEnd={triggerReRender}
+              className="flex-1 accent-neon-purple h-1"
+            />
+            <span className="text-xs text-text-secondary w-10 text-right font-mono">
+              {Math.round(volumes[track] * 100)}%
+            </span>
+          </div>
+        ))}
       </div>
 
       {/* Play button */}
@@ -148,10 +243,37 @@ export default function MixStep({ notes, chords, drums, detectedKey, onStartOver
           </div>
         </div>
         <div>
-          <p className="text-xs text-text-secondary mb-2">
-            Suggested next phrase
-            <span className="text-neon-green ml-1">(try singing this!)</span>
-          </p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs text-text-secondary">
+              Suggested next phrase
+              <span className="text-neon-green ml-1">(try singing this!)</span>
+            </p>
+            <button
+              onClick={handlePreviewSuggested}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                previewingSuggested
+                  ? "bg-neon-green/30 text-neon-green"
+                  : "bg-surface-secondary hover:bg-neon-green/20 text-text-secondary hover:text-neon-green"
+              }`}
+            >
+              {previewingSuggested ? (
+                <>
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="4" width="4" height="16" rx="1" />
+                    <rect x="14" y="4" width="4" height="16" rx="1" />
+                  </svg>
+                  Stop
+                </>
+              ) : (
+                <>
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                  Listen
+                </>
+              )}
+            </button>
+          </div>
           <div className="flex flex-wrap gap-1.5">
             {suggested.map((note, i) => (
               <span

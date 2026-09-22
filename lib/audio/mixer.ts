@@ -1,9 +1,13 @@
 import * as Tone from "tone";
 import toWav from "audiobuffer-to-wav";
-import type { ChordProgression, DrumStyle, QuantizedNote } from "../types";
+import type { ChordInstrument, ChordProgression, DrumStyle, KeyResult, MelodyVoice, MixVolumes, PitchReading, QuantizedNote, VoicePcm } from "../types";
+import { playGuitarChord, playStringsChord, playSynthPadChord } from "./chordSynths";
+import { autotuneVoice } from "./autotune";
+import { loadSampleBank, findNearestPianoSample, type SampleBank, type DecodedSample } from "./sampleLoader";
 
 let activeSynths: Tone.ToneAudioNode[] = [];
 let cleanupTimers: ReturnType<typeof setTimeout>[] = [];
+let activeSourceNodes: AudioBufferSourceNode[] = [];
 
 export async function ensureToneStarted() {
   await Tone.start();
@@ -16,6 +20,10 @@ function disposeActiveSynths() {
     try { s.dispose(); } catch { /* */ }
   });
   activeSynths = [];
+  activeSourceNodes.forEach((s) => {
+    try { s.stop(); s.disconnect(); } catch { /* */ }
+  });
+  activeSourceNodes = [];
 }
 
 export function stopPreview() {
@@ -26,20 +34,20 @@ function midiToFreq(midi: number): number {
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
-function timeToSeconds(timeStr: string, bpm: number): number {
+function timeToSeconds(timeStr: string, bpm: number, beatsPerBar = 4): number {
   const [bar, beat, sixteenth] = timeStr.split(":").map(Number);
-  const totalBeats = bar * 4 + beat + sixteenth / 4;
+  const totalBeats = bar * beatsPerBar + beat + sixteenth / 4;
   return (totalBeats * 60) / bpm;
 }
 
-// Collect and sort drum events per instrument, ensuring strictly increasing times
 function buildDrumSchedule(
   pattern: DrumStyle["pattern"],
   bpm: number,
   numBars: number,
-  baseTime: number
+  baseTime: number,
+  beatsPerBar = 4
 ): { kick: number[]; snare: number[]; hihat: number[] } {
-  const barDuration = (4 * 60) / bpm;
+  const barDuration = (beatsPerBar * 60) / bpm;
   const kick: number[] = [];
   const snare: number[] = [];
   const hihat: number[] = [];
@@ -47,7 +55,7 @@ function buildDrumSchedule(
   for (let bar = 0; bar < numBars; bar++) {
     const barOffset = bar * barDuration;
     for (const hit of pattern) {
-      const t = baseTime + barOffset + timeToSeconds(hit.time, bpm);
+      const t = baseTime + barOffset + timeToSeconds(hit.time, bpm, beatsPerBar);
       switch (hit.instrument) {
         case "kick": kick.push(t); break;
         case "snare": snare.push(t); break;
@@ -59,9 +67,7 @@ function buildDrumSchedule(
   function dedup(arr: number[]): number[] {
     arr.sort((a, b) => a - b);
     for (let i = 1; i < arr.length; i++) {
-      if (arr[i] <= arr[i - 1]) {
-        arr[i] = arr[i - 1] + 0.005;
-      }
+      if (arr[i] <= arr[i - 1]) arr[i] = arr[i - 1] + 0.005;
     }
     return arr;
   }
@@ -69,64 +75,178 @@ function buildDrumSchedule(
   return { kick: dedup(kick), snare: dedup(snare), hihat: dedup(hihat) };
 }
 
-// Schedule hihat hits using raw Web Audio noise bursts through a highpass filter.
-// This avoids MetalSynth's monophonic "start time" constraint entirely.
-function scheduleHihats(
-  times: number[],
-  destination: AudioNode,
-  audioContext: BaseAudioContext
-) {
-  for (const t of times) {
-    // White noise burst → highpass filter → gain envelope
-    const bufferSize = Math.floor(audioContext.sampleRate * 0.05);
-    const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
-    const data = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
+// ---------------------------------------------------------------------------
+//  Helpers for raw Web Audio sample playback
+// ---------------------------------------------------------------------------
 
-    const source = audioContext.createBufferSource();
-    source.buffer = noiseBuffer;
-
-    const hp = audioContext.createBiquadFilter();
-    hp.type = "highpass";
-    hp.frequency.value = 7000;
-
-    const gain = audioContext.createGain();
-    gain.gain.setValueAtTime(0.3, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-
-    source.connect(hp);
-    hp.connect(gain);
-    gain.connect(destination);
-    source.start(t);
-    source.stop(t + 0.05);
+/** Create an AudioBuffer in the given context from pre-decoded sample data. */
+function makeBuf(ctx: BaseAudioContext, sample: DecodedSample): AudioBuffer {
+  const buf = ctx.createBuffer(sample.channels.length, sample.length, sample.sampleRate);
+  for (let ch = 0; ch < sample.channels.length; ch++) {
+    buf.getChannelData(ch).set(sample.channels[ch]);
   }
+  return buf;
 }
 
-export async function previewChords(progression: ChordProgression): Promise<void> {
+/** Create a simple exponential-decay impulse response for convolution reverb. */
+function createReverbIR(ctx: BaseAudioContext, duration: number, decay: number): AudioBuffer {
+  const len = Math.floor(ctx.sampleRate * duration);
+  const ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const data = ir.getChannelData(ch);
+    for (let i = 0; i < len; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    }
+  }
+  return ir;
+}
+
+/** Play a piano sample at the given MIDI note, with envelope, into dry + reverb buses. */
+function playPianoNote(
+  ctx: BaseAudioContext,
+  pianoBuffers: Map<number, AudioBuffer>,
+  bank: SampleBank,
+  midi: number,
+  time: number,
+  duration: number,
+  dryDest: AudioNode,
+  reverbDest: AudioNode,
+  volume = 0.25
+) {
+  const { sample, rate } = findNearestPianoSample(bank, midi);
+  const buf = pianoBuffers.get(sample.midiNote)!;
+
+  const source = ctx.createBufferSource();
+  source.buffer = buf;
+  source.playbackRate.value = rate;
+
+  const gain = ctx.createGain();
+  const safeEnd = Math.max(time + duration * 0.7, time + 0.05);
+  gain.gain.setValueAtTime(volume, time);
+  gain.gain.setValueAtTime(volume, safeEnd);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + duration + 0.3);
+
+  source.connect(gain);
+  gain.connect(dryDest);
+  gain.connect(reverbDest);
+  source.start(time);
+  source.stop(time + duration + 2);
+}
+
+/** Play a one-shot sample (drum hit). */
+function playSample(
+  ctx: BaseAudioContext,
+  buf: AudioBuffer,
+  time: number,
+  dest: AudioNode,
+  volume: number
+) {
+  const source = ctx.createBufferSource();
+  source.buffer = buf;
+  const gain = ctx.createGain();
+  gain.gain.value = volume;
+  source.connect(gain);
+  gain.connect(dest);
+  source.start(time);
+}
+
+// ---------------------------------------------------------------------------
+//  Preview functions (real-time playback using Tone.js + sample bank)
+// ---------------------------------------------------------------------------
+
+export async function previewMelody(notes: QuantizedNote[]): Promise<void> {
+  if (notes.length === 0) return;
   await ensureToneStarted();
   disposeActiveSynths();
 
-  const synth = new Tone.PolySynth(Tone.Synth, {
-    oscillator: { type: "triangle" },
-    envelope: { attack: 0.05, decay: 0.3, sustain: 0.4, release: 0.8 },
-    volume: -8,
-  }).toDestination();
-  activeSynths.push(synth);
+  const bank = await loadSampleBank();
+  const ctx = Tone.getContext().rawContext as AudioContext;
 
-  const now = Tone.now() + 0.1;
-  progression.chords.forEach((chord, i) => {
-    const freqs = chord.notes.map(midiToFreq);
-    synth.triggerAttackRelease(freqs, 0.9, now + i * 1);
-  });
+  // Create piano buffers in current context
+  const pianoBuffers = new Map<number, AudioBuffer>();
+  for (const s of bank.piano) pianoBuffers.set(s.midiNote, makeBuf(ctx, s));
 
-  const timer = setTimeout(() => {
-    if (activeSynths.includes(synth)) {
-      try { synth.dispose(); } catch { /* */ }
-      activeSynths = activeSynths.filter((s) => s !== synth);
-    }
-  }, progression.chords.length * 1000 + 1500);
+  const baseTime = notes[0].startTime;
+  const now = ctx.currentTime + 0.1;
+
+  for (const n of notes) {
+    const t = now + (n.startTime - baseTime);
+    const dur = Math.min(n.duration, 2);
+    const { sample, rate } = findNearestPianoSample(bank, n.midiNote);
+    const buf = pianoBuffers.get(sample.midiNote)!;
+
+    const source = ctx.createBufferSource();
+    source.buffer = buf;
+    source.playbackRate.value = rate;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.3, t);
+    gain.gain.setValueAtTime(0.3, t + dur * 0.7);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(t);
+    source.stop(t + dur + 1);
+    activeSourceNodes.push(source);
+  }
+
+  const lastNote = notes[notes.length - 1];
+  const totalMs = ((lastNote.startTime - baseTime) + lastNote.duration) * 1000 + 1500;
+  const timer = setTimeout(() => disposeActiveSynths(), totalMs);
+  cleanupTimers.push(timer);
+}
+
+export async function previewChords(
+  progression: ChordProgression,
+  instrument: ChordInstrument = "piano"
+): Promise<void> {
+  await ensureToneStarted();
+  disposeActiveSynths();
+
+  const ctx = Tone.getContext().rawContext as AudioContext;
+  const now = ctx.currentTime + 0.1;
+
+  if (instrument === "piano") {
+    const bank = await loadSampleBank();
+    const pianoBuffers = new Map<number, AudioBuffer>();
+    for (const s of bank.piano) pianoBuffers.set(s.midiNote, makeBuf(ctx, s));
+
+    progression.chords.forEach((chord, i) => {
+      const t = now + i * 1;
+      for (const midi of chord.notes) {
+        const { sample, rate } = findNearestPianoSample(bank, midi);
+        const buf = pianoBuffers.get(sample.midiNote)!;
+
+        const source = ctx.createBufferSource();
+        source.buffer = buf;
+        source.playbackRate.value = rate;
+
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.3, t);
+        gain.gain.setValueAtTime(0.3, t + 0.7);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.95);
+
+        source.connect(gain);
+        gain.connect(ctx.destination);
+        source.start(t);
+        source.stop(t + 2);
+        activeSourceNodes.push(source);
+      }
+    });
+  } else {
+    const playFn =
+      instrument === "guitar" ? playGuitarChord :
+      instrument === "strings" ? playStringsChord :
+      playSynthPadChord;
+
+    progression.chords.forEach((chord, i) => {
+      const t = now + i * 1;
+      playFn(ctx, chord.notes, t, 0.9, ctx.destination, ctx.destination, 0.3);
+    });
+  }
+
+  const timer = setTimeout(() => disposeActiveSynths(), progression.chords.length * 1000 + 1500);
   cleanupTimers.push(timer);
 }
 
@@ -134,124 +254,195 @@ export async function previewDrums(style: DrumStyle): Promise<void> {
   await ensureToneStarted();
   disposeActiveSynths();
 
-  const kick = new Tone.MembraneSynth({ volume: -4 }).toDestination();
-  const snare = new Tone.NoiseSynth({
-    noise: { type: "white" },
-    envelope: { attack: 0.001, decay: 0.15, sustain: 0 },
-    volume: -8,
-  }).toDestination();
-  activeSynths.push(kick, snare);
+  const bank = await loadSampleBank();
+  const ctx = Tone.getContext().rawContext as AudioContext;
 
-  const now = Tone.now() + 0.1;
-  const schedule = buildDrumSchedule(style.pattern, style.bpm, 2, now);
+  const kickBuf = makeBuf(ctx, bank.kick);
+  const snareBuf = makeBuf(ctx, bank.snare);
+  const hihatBuf = makeBuf(ctx, bank.hihat);
 
-  schedule.kick.forEach((t) => kick.triggerAttackRelease("C1", 0.2, t));
-  schedule.snare.forEach((t) => snare.triggerAttackRelease(0.1, t));
+  const now = ctx.currentTime + 0.1;
+  const bpb = style.beatsPerBar ?? 4;
+  const schedule = buildDrumSchedule(style.pattern, style.bpm, 2, now, bpb);
 
-  // Hihat via raw Web Audio to avoid MetalSynth timing constraints
-  const ctx = Tone.getContext().rawContext;
-  if (ctx instanceof AudioContext) {
-    scheduleHihats(schedule.hihat, ctx.destination, ctx);
-  }
+  schedule.kick.forEach((t) => {
+    const s = ctx.createBufferSource();
+    s.buffer = kickBuf;
+    const g = ctx.createGain();
+    g.gain.value = 0.8;
+    s.connect(g);
+    g.connect(ctx.destination);
+    s.start(t);
+    activeSourceNodes.push(s);
+  });
 
-  const barDuration = (4 * 60) / style.bpm;
-  const timer = setTimeout(() => {
-    disposeActiveSynths();
-  }, barDuration * 2 * 1000 + 1000);
+  schedule.snare.forEach((t) => {
+    const s = ctx.createBufferSource();
+    s.buffer = snareBuf;
+    const g = ctx.createGain();
+    g.gain.value = 0.7;
+    s.connect(g);
+    g.connect(ctx.destination);
+    s.start(t);
+    activeSourceNodes.push(s);
+  });
+
+  schedule.hihat.forEach((t) => {
+    const s = ctx.createBufferSource();
+    s.buffer = hihatBuf;
+    const g = ctx.createGain();
+    g.gain.value = 0.5;
+    s.connect(g);
+    g.connect(ctx.destination);
+    s.start(t);
+    activeSourceNodes.push(s);
+  });
+
+  const barDuration = (bpb * 60) / style.bpm;
+  const timer = setTimeout(() => disposeActiveSynths(), barDuration * 2 * 1000 + 1000);
   cleanupTimers.push(timer);
 }
+
+// ---------------------------------------------------------------------------
+//  Offline mix render — all raw Web Audio, no Tone.js synths
+// ---------------------------------------------------------------------------
 
 export async function renderMix(
   notes: QuantizedNote[],
   progression: ChordProgression,
   drumStyle: DrumStyle,
-  suggestedNotes?: QuantizedNote[]
+  suggestedNotes?: QuantizedNote[],
+  bpmOverride?: number,
+  voicePcm?: VoicePcm,
+  pitchReadings?: PitchReading[],
+  detectedKey?: KeyResult,
+  chordInstrument: ChordInstrument = "piano",
+  beatsPerBar = 4,
+  melodyVoice: MelodyVoice = "real",
+  volumes?: MixVolumes
 ): Promise<{ buffer: AudioBuffer; url: string }> {
-  const bpm = drumStyle.bpm;
-  const barDuration = (4 * 60) / bpm;
-  const totalBars = 8;
+  const vol = volumes ?? { melody: 1, chords: 1, drums: 1 };
+  const bpm = bpmOverride ?? drumStyle.bpm;
+  const barDuration = (beatsPerBar * 60) / bpm;
+  const totalBars = 4;
   const renderDuration = barDuration * totalBars + 2;
 
-  // Combine original melody + suggested continuation into one sequence
-  const allNotes = [...notes, ...(suggestedNotes || [])];
+  // Load instrument samples
+  const bank = await loadSampleBank();
 
-  const toneBuffer = await Tone.Offline((context) => {
-    const rawCtx = context.rawContext as OfflineAudioContext;
+  // Apply autotune to raw PCM voice data (no encode/decode roundtrip)
+  let voiceChannels: Float32Array[] | null = null;
+  let voiceSampleRate = 44100;
+  let voiceLength = 0;
+  if (voicePcm) {
+    voiceSampleRate = voicePcm.sampleRate;
+    voiceLength = voicePcm.channels[0].length;
 
-    // --- Beat-snapped synth melody ---
-    if (allNotes.length > 0) {
-      const melodySynth = new Tone.Synth({
-        oscillator: { type: "triangle" },
-        envelope: { attack: 0.02, decay: 0.1, sustain: 0.6, release: 0.3 },
-        volume: -6,
-      }).toDestination();
+    if (pitchReadings && pitchReadings.length > 0 && detectedKey) {
+      voiceChannels = autotuneVoice(voicePcm.channels, voiceSampleRate, pitchReadings, detectedKey);
+    } else {
+      voiceChannels = voicePcm.channels;
+    }
+  }
 
-      const melodyEnd = allNotes[allNotes.length - 1].startTime + allNotes[allNotes.length - 1].duration;
-      const loopLength = melodyEnd + barDuration * 0.5; // half-bar gap before loop
-      const melodyEvents: { t: number; freq: number; dur: number }[] = [];
+  // Render using raw OfflineAudioContext (no Tone.js synths)
+  const sampleRate = 44100;
+  const offCtx = new OfflineAudioContext(2, Math.ceil(renderDuration * sampleRate), sampleRate);
 
-      for (let offset = 0; offset < totalBars * barDuration; offset += loopLength) {
-        for (const note of allNotes) {
-          const t = offset + note.startTime;
-          if (t >= 0 && t < totalBars * barDuration) {
-            melodyEvents.push({
-              t,
-              freq: midiToFreq(note.midiNote),
-              dur: Math.min(note.duration, 2),
-            });
-          }
-        }
-      }
+  // --- Reverb bus ---
+  const ir = createReverbIR(offCtx, 1.8, 3.0);
+  const convolver = offCtx.createConvolver();
+  convolver.buffer = ir;
+  const reverbWet = offCtx.createGain();
+  reverbWet.gain.value = 0.12;
+  convolver.connect(reverbWet);
+  reverbWet.connect(offCtx.destination);
 
-      melodyEvents.sort((a, b) => a.t - b.t);
-      for (let i = 1; i < melodyEvents.length; i++) {
-        if (melodyEvents[i].t <= melodyEvents[i - 1].t) {
-          melodyEvents[i].t = melodyEvents[i - 1].t + 0.005;
-        }
-      }
+  // --- Create reusable AudioBuffers from sample bank ---
+  const pianoBuffers = new Map<number, AudioBuffer>();
+  for (const s of bank.piano) pianoBuffers.set(s.midiNote, makeBuf(offCtx, s));
 
-      for (const ev of melodyEvents) {
-        melodySynth.triggerAttackRelease(ev.freq, ev.dur, ev.t);
+  const kickBuf = makeBuf(offCtx, bank.kick);
+  const snareBuf = makeBuf(offCtx, bank.snare);
+  const hihatBuf = makeBuf(offCtx, bank.hihat);
+
+  // --- Autotuned voice ---
+  if (melodyVoice === "real" && voiceChannels && voiceLength > 0) {
+    const voiceBuf = offCtx.createBuffer(voiceChannels.length, voiceLength, voiceSampleRate);
+    for (let ch = 0; ch < voiceChannels.length; ch++) {
+      voiceBuf.getChannelData(ch).set(voiceChannels[ch]);
+    }
+    const voiceSource = offCtx.createBufferSource();
+    voiceSource.buffer = voiceBuf;
+    const voiceGain = offCtx.createGain();
+    voiceGain.gain.value = 1.2 * vol.melody;
+    voiceSource.connect(voiceGain);
+    voiceGain.connect(offCtx.destination);
+    voiceGain.connect(convolver); // slight reverb on voice
+    voiceSource.start(0);
+  }
+
+  // --- Piano melody (replaces voice) ---
+  if (melodyVoice === "piano" && notes.length > 0) {
+    for (const note of notes) {
+      if (note.startTime >= 0 && note.startTime < totalBars * barDuration) {
+        playPianoNote(
+          offCtx, pianoBuffers, bank,
+          note.midiNote, note.startTime, Math.min(note.duration, 2),
+          offCtx.destination, convolver, 0.35 * vol.melody
+        );
       }
     }
+  }
 
-    // --- Chords ---
-    const chordSynth = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: "triangle" },
-      envelope: { attack: 0.05, decay: 0.3, sustain: 0.4, release: 0.8 },
-      volume: -14,
-    }).toDestination();
+  // --- Chords (instrument-dependent) ---
+  if (chordInstrument === "piano") {
+    for (let bar = 0; bar < totalBars; bar++) {
+      const chord = progression.chords[bar % progression.chords.length];
+      const t = bar * barDuration;
+      for (const midi of chord.notes) {
+        playPianoNote(offCtx, pianoBuffers, bank, midi, t, barDuration * 0.9, offCtx.destination, convolver, 0.2 * vol.chords);
+      }
+    }
+  } else {
+    const playFn =
+      chordInstrument === "guitar" ? playGuitarChord :
+      chordInstrument === "strings" ? playStringsChord :
+      playSynthPadChord;
 
     for (let bar = 0; bar < totalBars; bar++) {
       const chord = progression.chords[bar % progression.chords.length];
-      const freqs = chord.notes.map(midiToFreq);
       const t = bar * barDuration;
-      chordSynth.triggerAttackRelease(freqs, barDuration * 0.9, t);
+      playFn(offCtx, chord.notes, t, barDuration * 0.9, offCtx.destination, convolver, 0.2 * vol.chords);
     }
+  }
 
-    // --- Kick drum ---
-    const kick = new Tone.MembraneSynth({ volume: -4 }).toDestination();
-    const kickSchedule = buildDrumSchedule(drumStyle.pattern, bpm, totalBars, 0);
-    kickSchedule.kick.forEach((t) => kick.triggerAttackRelease("C1", 0.2, t));
+  // --- Piano melody for suggested continuation ---
+  if (suggestedNotes && suggestedNotes.length > 0) {
+    for (const note of suggestedNotes) {
+      if (note.startTime >= 0 && note.startTime < totalBars * barDuration) {
+        playPianoNote(
+          offCtx, pianoBuffers, bank,
+          note.midiNote, note.startTime, Math.min(note.duration, 2),
+          offCtx.destination, convolver, 0.25
+        );
+      }
+    }
+  }
 
-    // --- Snare ---
-    const snare = new Tone.NoiseSynth({
-      noise: { type: "white" },
-      envelope: { attack: 0.001, decay: 0.15, sustain: 0 },
-      volume: -8,
-    }).toDestination();
-    kickSchedule.snare.forEach((t) => snare.triggerAttackRelease(0.1, t));
+  // --- Drums (sample-based) ---
+  const drumSchedule = buildDrumSchedule(drumStyle.pattern, bpm, totalBars, 0, beatsPerBar);
+  drumSchedule.kick.forEach((t) => playSample(offCtx, kickBuf, t, offCtx.destination, 0.8 * vol.drums));
+  drumSchedule.snare.forEach((t) => playSample(offCtx, snareBuf, t, offCtx.destination, 0.65 * vol.drums));
+  drumSchedule.hihat.forEach((t) => playSample(offCtx, hihatBuf, t, offCtx.destination, 0.45 * vol.drums));
 
-    // --- Hihat via raw Web Audio nodes (avoids MetalSynth issues) ---
-    scheduleHihats(kickSchedule.hihat, rawCtx.destination, rawCtx);
-  }, renderDuration);
-
-  const nativeBuffer = toneBuffer.get()!;
-  const wavArrayBuffer = toWav(nativeBuffer);
+  // --- Render ---
+  const renderedBuffer = await offCtx.startRendering();
+  const wavArrayBuffer = toWav(renderedBuffer);
   const wavBlob = new Blob([wavArrayBuffer], { type: "audio/wav" });
   const url = URL.createObjectURL(wavBlob);
 
-  return { buffer: nativeBuffer, url };
+  return { buffer: renderedBuffer, url };
 }
 
 export function downloadWav(url: string, filename = "hummly-demo.wav") {

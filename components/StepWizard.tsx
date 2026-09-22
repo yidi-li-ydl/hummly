@@ -11,20 +11,27 @@ import type {
   HummlyState,
   HummlyAction,
   PitchReading,
+  VoicePcm,
   QuantizedNote,
   KeyResult,
+  ChordInstrument,
   ChordProgression,
   DrumStyle,
+  MelodyVoice,
 } from "@/lib/types";
 
 const initialState: HummlyState = {
   step: "record",
-  audioBlob: null,
+  bpm: 100,
+  beatsPerBar: 4,
+  voicePcm: null,
   pitchReadings: [],
   notes: [],
   detectedKey: null,
   chordOptions: [],
   selectedChords: null,
+  chordInstrument: "piano",
+  melodyVoice: "real",
   drumOptions: [],
   selectedDrums: null,
   mixBuffer: null,
@@ -36,8 +43,12 @@ function reducer(state: HummlyState, action: HummlyAction): HummlyState {
   switch (action.type) {
     case "SET_STEP":
       return { ...state, step: action.step, error: null };
-    case "SET_AUDIO_BLOB":
-      return { ...state, audioBlob: action.blob };
+    case "SET_BPM":
+      return { ...state, bpm: action.bpm };
+    case "SET_BEATS_PER_BAR":
+      return { ...state, beatsPerBar: action.beatsPerBar };
+    case "SET_VOICE_PCM":
+      return { ...state, voicePcm: action.pcm };
     case "ADD_PITCH_READING":
       return { ...state, pitchReadings: [...state.pitchReadings, action.reading] };
     case "SET_PITCH_READINGS":
@@ -50,10 +61,14 @@ function reducer(state: HummlyState, action: HummlyAction): HummlyState {
       return { ...state, chordOptions: action.options };
     case "SELECT_CHORDS":
       return { ...state, selectedChords: action.progression };
+    case "SET_CHORD_INSTRUMENT":
+      return { ...state, chordInstrument: action.instrument };
     case "SET_DRUM_OPTIONS":
       return { ...state, drumOptions: action.options };
     case "SELECT_DRUMS":
       return { ...state, selectedDrums: action.style };
+    case "SET_MELODY_VOICE":
+      return { ...state, melodyVoice: action.voice };
     case "SET_MIX":
       return { ...state, mixBuffer: action.buffer, mixUrl: action.url };
     case "SET_ERROR":
@@ -68,8 +83,16 @@ function reducer(state: HummlyState, action: HummlyAction): HummlyState {
 export default function StepWizard() {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  const handleRecordComplete = useCallback((blob: Blob, readings: PitchReading[]) => {
-    dispatch({ type: "SET_AUDIO_BLOB", blob });
+  const handleBpmChange = useCallback((bpm: number) => {
+    dispatch({ type: "SET_BPM", bpm });
+  }, []);
+
+  const handleBeatsPerBarChange = useCallback((beatsPerBar: number) => {
+    dispatch({ type: "SET_BEATS_PER_BAR", beatsPerBar });
+  }, []);
+
+  const handleRecordComplete = useCallback((pcm: VoicePcm, readings: PitchReading[]) => {
+    dispatch({ type: "SET_VOICE_PCM", pcm });
     dispatch({ type: "SET_PITCH_READINGS", readings });
     dispatch({ type: "SET_STEP", step: "processing" });
   }, []);
@@ -89,14 +112,19 @@ export default function StepWizard() {
     dispatch({ type: "SET_ERROR", error });
   }, []);
 
-  const handleChordSelect = useCallback((progression: ChordProgression) => {
+  const handleChordSelect = useCallback((progression: ChordProgression, instrument: ChordInstrument) => {
     dispatch({ type: "SELECT_CHORDS", progression });
+    dispatch({ type: "SET_CHORD_INSTRUMENT", instrument });
     dispatch({ type: "SET_STEP", step: "drums" });
   }, []);
 
   const handleDrumSelect = useCallback((style: DrumStyle) => {
     dispatch({ type: "SELECT_DRUMS", style });
     dispatch({ type: "SET_STEP", step: "mix" });
+  }, []);
+
+  const handleMelodyVoiceChange = useCallback((voice: MelodyVoice) => {
+    dispatch({ type: "SET_MELODY_VOICE", voice });
   }, []);
 
   const handleStartOver = useCallback(() => {
@@ -113,7 +141,9 @@ export default function StepWizard() {
         </div>
       )}
 
-      {state.step === "record" && <RecordStep onComplete={handleRecordComplete} />}
+      {state.step === "record" && (
+        <RecordStep bpm={state.bpm} beatsPerBar={state.beatsPerBar} onBpmChange={handleBpmChange} onBeatsPerBarChange={handleBeatsPerBarChange} onComplete={handleRecordComplete} />
+      )}
 
       {state.step === "processing" && (
         <ProcessingStep
@@ -131,14 +161,21 @@ export default function StepWizard() {
         />
       )}
 
-      {state.step === "drums" && <DrumStep options={state.drumOptions} onSelect={handleDrumSelect} />}
+      {state.step === "drums" && <DrumStep options={state.drumOptions} beatsPerBar={state.beatsPerBar} onSelect={handleDrumSelect} />}
 
       {state.step === "mix" && state.selectedChords && state.selectedDrums && state.detectedKey && (
         <MixStep
           notes={state.notes}
           chords={state.selectedChords}
           drums={state.selectedDrums}
+          bpm={state.bpm}
+          beatsPerBar={state.beatsPerBar}
           detectedKey={state.detectedKey}
+          voicePcm={state.voicePcm}
+          pitchReadings={state.pitchReadings}
+          chordInstrument={state.chordInstrument}
+          melodyVoice={state.melodyVoice}
+          onMelodyVoiceChange={handleMelodyVoiceChange}
           onStartOver={handleStartOver}
         />
       )}

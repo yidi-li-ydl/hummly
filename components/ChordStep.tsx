@@ -2,17 +2,25 @@
 
 import { useState } from "react";
 import { previewChords, stopPreview } from "@/lib/audio/mixer";
-import type { ChordProgression, KeyResult } from "@/lib/types";
+import type { ChordInstrument, ChordProgression, KeyResult } from "@/lib/types";
+
+const INSTRUMENTS: { id: ChordInstrument; label: string; icon: string }[] = [
+  { id: "piano", label: "Piano", icon: "M3 5h18v14H3V5zm2 2v4h2V7H5zm4 0v4h2V7H9zm4 0v4h2V7h-2zm4 0v4h2V7h-2zM5 13v4h3v-4H5zm5 0v4h4v-4h-4zm6 0v4h3v-4h-3z" },
+  { id: "guitar", label: "Guitar", icon: "M19.59 3.41a2 2 0 00-2.83 0l-1.53 1.53a1 1 0 01-.38.25l-1.42.47a1 1 0 00-.57.57l-.47 1.42a1 1 0 01-.25.38L8.3 11.87a4.5 4.5 0 00-4.13 1.3 4.5 4.5 0 000 6.36 4.5 4.5 0 006.36 0 4.5 4.5 0 001.3-4.13l3.84-3.84a1 1 0 01.38-.25l1.42-.47a1 1 0 00.57-.57l.47-1.42a1 1 0 01.25-.38l1.53-1.53a2 2 0 000-2.83zM8.12 17.88a1.5 1.5 0 11-2.12-2.12 1.5 1.5 0 012.12 2.12z" },
+  { id: "strings", label: "Strings", icon: "M9 3v12.26A3.5 3.5 0 107 19.5V7h8v8.26A3.5 3.5 0 1013 19.5V5h-4z" },
+  { id: "synth-pad", label: "Synth Pad", icon: "M3 6h2v12H3V6zm4 2h2v8H7V8zm4-3h2v14h-2V5zm4 4h2v6h-2V9zm4-2h2v10h-2V7z" },
+];
 
 interface Props {
   options: ChordProgression[];
   detectedKey: KeyResult;
-  onSelect: (progression: ChordProgression) => void;
+  onSelect: (progression: ChordProgression, instrument: ChordInstrument) => void;
 }
 
 export default function ChordStep({ options, detectedKey, onSelect }: Props) {
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const [selectedInstrument, setSelectedInstrument] = useState<ChordInstrument>("piano");
 
   const handlePreview = async (index: number) => {
     if (previewIndex === index) {
@@ -21,14 +29,14 @@ export default function ChordStep({ options, detectedKey, onSelect }: Props) {
       return;
     }
     setPreviewIndex(index);
-    await previewChords(options[index]);
+    await previewChords(options[index], selectedInstrument);
     setPreviewIndex(null);
   };
 
   const handleSelect = (index: number) => {
     setSelected(index);
     stopPreview();
-    onSelect(options[index]);
+    onSelect(options[index], selectedInstrument);
   };
 
   return (
@@ -41,6 +49,25 @@ export default function ChordStep({ options, detectedKey, onSelect }: Props) {
           </span>
         </p>
         <p className="text-text-secondary text-xs mt-1">Choose a chord progression</p>
+      </div>
+
+      <div className="flex justify-center gap-2">
+        {INSTRUMENTS.map((inst) => (
+          <button
+            key={inst.id}
+            onClick={() => setSelectedInstrument(inst.id)}
+            className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+              selectedInstrument === inst.id
+                ? "bg-neon-cyan/20 border border-neon-cyan text-neon-cyan"
+                : "bg-surface-card border border-surface-card hover:border-neon-cyan/40 text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+              <path d={inst.icon} />
+            </svg>
+            {inst.label}
+          </button>
+        ))}
       </div>
 
       <div className="grid gap-3">

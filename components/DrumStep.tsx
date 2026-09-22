@@ -6,10 +6,12 @@ import type { DrumStyle } from "@/lib/types";
 
 interface Props {
   options: DrumStyle[];
+  beatsPerBar: number;
   onSelect: (style: DrumStyle) => void;
 }
 
-export default function DrumStep({ options, onSelect }: Props) {
+export default function DrumStep({ options, beatsPerBar, onSelect }: Props) {
+  const filtered = options.filter((s) => s.beatsPerBar === beatsPerBar);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
 
@@ -20,14 +22,14 @@ export default function DrumStep({ options, onSelect }: Props) {
       return;
     }
     setPreviewIndex(index);
-    await previewDrums(options[index]);
+    await previewDrums(filtered[index]);
     setPreviewIndex(null);
   };
 
   const handleSelect = (index: number) => {
     setSelected(index);
     stopPreview();
-    onSelect(options[index]);
+    onSelect(filtered[index]);
   };
 
   return (
@@ -37,7 +39,7 @@ export default function DrumStep({ options, onSelect }: Props) {
       </div>
 
       <div className="grid gap-3">
-        {options.map((style, i) => (
+        {filtered.map((style, i) => (
           <div
             key={i}
             className={`relative p-4 rounded-xl border transition-all cursor-pointer ${
