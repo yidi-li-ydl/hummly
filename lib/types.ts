@@ -56,6 +56,11 @@ export interface MixVolumes {
   drums: number;
 }
 
+export interface VoiceEQ {
+  lowCut: number;   // high-pass filter frequency in Hz (0–200)
+  presence: number;  // peaking filter gain in dB at ~3kHz (-6 to +12)
+}
+
 /** Raw PCM voice data — avoids lossy WebM encode/decode roundtrip. */
 export interface VoicePcm {
   channels: Float32Array[];

@@ -1,7 +1,7 @@
 import { PitchDetector } from "pitchy";
 import type { PitchReading } from "../types";
 
-const CLARITY_THRESHOLD = 0.8;
+const CLARITY_THRESHOLD = 0.65;
 const POLL_INTERVAL_MS = 50;
 
 export function startPitchTracking(

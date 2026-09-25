@@ -1,8 +1,9 @@
 import * as Tone from "tone";
 import toWav from "audiobuffer-to-wav";
-import type { ChordInstrument, ChordProgression, DrumStyle, KeyResult, MelodyVoice, MixVolumes, PitchReading, QuantizedNote, VoicePcm } from "../types";
+import type { ChordInstrument, ChordProgression, DrumStyle, KeyResult, MelodyVoice, MixVolumes, PitchReading, QuantizedNote, VoiceEQ, VoicePcm } from "../types";
 import { playGuitarChord, playStringsChord, playSynthPadChord } from "./chordSynths";
-import { autotuneVoice } from "./autotune";
+import { beatAlignVoice } from "./autotune";
+
 import { loadSampleBank, findNearestPianoSample, type SampleBank, type DecodedSample } from "./sampleLoader";
 
 let activeSynths: Tone.ToneAudioNode[] = [];
@@ -319,9 +320,12 @@ export async function renderMix(
   chordInstrument: ChordInstrument = "piano",
   beatsPerBar = 4,
   melodyVoice: MelodyVoice = "real",
-  volumes?: MixVolumes
+  volumes?: MixVolumes,
+  voiceEq?: VoiceEQ,
+  originalNotes?: QuantizedNote[]
 ): Promise<{ buffer: AudioBuffer; url: string }> {
   const vol = volumes ?? { melody: 1, chords: 1, drums: 1 };
+  const eq = voiceEq ?? { lowCut: 80, presence: 0 };
   const bpm = bpmOverride ?? drumStyle.bpm;
   const barDuration = (beatsPerBar * 60) / bpm;
   const totalBars = 4;
@@ -330,19 +334,14 @@ export async function renderMix(
   // Load instrument samples
   const bank = await loadSampleBank();
 
-  // Apply autotune to raw PCM voice data (no encode/decode roundtrip)
+  // Use raw PCM voice data directly
   let voiceChannels: Float32Array[] | null = null;
   let voiceSampleRate = 44100;
   let voiceLength = 0;
   if (voicePcm) {
     voiceSampleRate = voicePcm.sampleRate;
     voiceLength = voicePcm.channels[0].length;
-
-    if (pitchReadings && pitchReadings.length > 0 && detectedKey) {
-      voiceChannels = autotuneVoice(voicePcm.channels, voiceSampleRate, pitchReadings, detectedKey);
-    } else {
-      voiceChannels = voicePcm.channels;
-    }
+    voiceChannels = voicePcm.channels;
   }
 
   // Render using raw OfflineAudioContext (no Tone.js synths)
@@ -368,15 +367,35 @@ export async function renderMix(
 
   // --- Autotuned voice ---
   if (melodyVoice === "real" && voiceChannels && voiceLength > 0) {
-    const voiceBuf = offCtx.createBuffer(voiceChannels.length, voiceLength, voiceSampleRate);
-    for (let ch = 0; ch < voiceChannels.length; ch++) {
-      voiceBuf.getChannelData(ch).set(voiceChannels[ch]);
+    // Beat-align voice when original (pre-snap) notes are available
+    let finalChannels = voiceChannels;
+    if (originalNotes && originalNotes.length > 0 && notes.length === originalNotes.length) {
+      finalChannels = beatAlignVoice(voiceChannels, voiceSampleRate, originalNotes, notes);
+    }
+
+    const voiceBuf = offCtx.createBuffer(finalChannels.length, finalChannels[0].length, voiceSampleRate);
+    for (let ch = 0; ch < finalChannels.length; ch++) {
+      voiceBuf.getChannelData(ch).set(finalChannels[ch]);
     }
     const voiceSource = offCtx.createBufferSource();
     voiceSource.buffer = voiceBuf;
+
+    // Voice EQ: highpass (low cut) → peaking (presence)
+    const highpass = offCtx.createBiquadFilter();
+    highpass.type = "highpass";
+    highpass.frequency.value = eq.lowCut;
+
+    const peaking = offCtx.createBiquadFilter();
+    peaking.type = "peaking";
+    peaking.frequency.value = 3000;
+    peaking.Q.value = 1;
+    peaking.gain.value = eq.presence;
+
     const voiceGain = offCtx.createGain();
-    voiceGain.gain.value = 1.2 * vol.melody;
-    voiceSource.connect(voiceGain);
+    voiceGain.gain.value = 2.5 * vol.melody;
+    voiceSource.connect(highpass);
+    highpass.connect(peaking);
+    peaking.connect(voiceGain);
     voiceGain.connect(offCtx.destination);
     voiceGain.connect(convolver); // slight reverb on voice
     voiceSource.start(0);

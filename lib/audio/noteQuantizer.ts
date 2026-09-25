@@ -4,7 +4,8 @@ const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", 
 
 export { NOTE_NAMES };
 const MIN_NOTE_DURATION = 0.08; // 80ms minimum
-const GAP_BRIDGE_THRESHOLD = 0.15; // 150ms gap bridging
+const MEDIAN_WINDOW = 3; // 3-point median filter (~150ms at 50ms polling)
+const GAP_BRIDGE_THRESHOLD = 0.2; // 200ms gap bridging
 
 function frequencyToMidi(freq: number): number {
   return Math.round(12 * Math.log2(freq / 440) + 69);
@@ -16,6 +17,15 @@ function midiToNoteName(midi: number): string {
   return `${NOTE_NAMES[pitchClass]}${octave}`;
 }
 
+/** Median of a small array (copies & sorts to avoid mutation). */
+function median(values: number[]): number {
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+    : sorted[mid];
+}
+
 interface NoteRun {
   midiNote: number;
   startTime: number;
@@ -25,10 +35,20 @@ interface NoteRun {
 export function quantizeNotes(readings: PitchReading[]): QuantizedNote[] {
   if (readings.length === 0) return [];
 
-  // Stage 1: Convert frequencies to MIDI and create runs
-  const midiReadings = readings.map((r) => ({
-    midi: frequencyToMidi(r.frequency),
-    time: r.time,
+  // Stage 1: Convert frequencies to MIDI
+  const rawMidi = readings.map((r) => frequencyToMidi(r.frequency));
+
+  // Stage 1b: Median-filter MIDI values to smooth pitch wobble
+  const smoothed = rawMidi.map((_, i) => {
+    const half = Math.floor(MEDIAN_WINDOW / 2);
+    const start = Math.max(0, i - half);
+    const end = Math.min(rawMidi.length, i + half + 1);
+    return median(rawMidi.slice(start, end));
+  });
+
+  const midiReadings = smoothed.map((midi, i) => ({
+    midi,
+    time: readings[i].time,
   }));
 
   // Stage 2: Run-length encoding with gap bridging
