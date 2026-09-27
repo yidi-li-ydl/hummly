@@ -21,23 +21,18 @@ interface Props {
   onStartOver: () => void;
 }
 
-export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, melodyVoice, drumKit, onMelodyVoiceChange, onStartOver }: Props) {
+export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, drumKit, onStartOver }: Props) {
   const [status, setStatus] = useState<"rendering" | "ready" | "error">("rendering");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [mixUrl, setMixUrl] = useState<string | null>(null);
+  const [vocalUrl, setVocalUrl] = useState<string | null>(null);
+  const [instrUrl, setInstrUrl] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [renderKey, setRenderKey] = useState(0);
   const [voiceOn, setVoiceOn] = useState(true);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const vocalRef = useRef<HTMLAudioElement | null>(null);
+  const instrRef = useRef<HTMLAudioElement | null>(null);
   const hasRendered = useRef(false);
 
-  const volumes: MixVolumes = useMemo(
-    () => ({ melody: voiceOn ? 1 : 0, chords: 1, drums: 1 }),
-    [voiceOn]
-  );
   const voiceEq: VoiceEQ = { lowCut: 80, presence: 0 };
-
-  // Snap melody to beat grid
   const snappedNotes = useMemo(() => snapToGrid(notes, bpm), [notes, bpm]);
 
   useEffect(() => {
@@ -46,13 +41,24 @@ export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detect
 
     async function render() {
       try {
-        const { url } = await renderMix(
-          snappedNotes, chords, drums, undefined, bpm,
-          voicePcm ?? undefined, pitchReadings, detectedKey,
-          chordInstrument, beatsPerBar, "real", volumes, voiceEq, notes,
-          drumKit
-        );
-        setMixUrl(url);
+        const volWith: MixVolumes = { melody: 1, chords: 1, drums: 1 };
+        const volWithout: MixVolumes = { melody: 0, chords: 1, drums: 1 };
+
+        const [withVoice, withoutVoice] = await Promise.all([
+          renderMix(
+            snappedNotes, chords, drums, undefined, bpm,
+            voicePcm ?? undefined, pitchReadings, detectedKey,
+            chordInstrument, beatsPerBar, "real", volWith, voiceEq, notes, drumKit
+          ),
+          renderMix(
+            snappedNotes, chords, drums, undefined, bpm,
+            voicePcm ?? undefined, pitchReadings, detectedKey,
+            chordInstrument, beatsPerBar, "real", volWithout, voiceEq, notes, drumKit
+          ),
+        ]);
+
+        setVocalUrl(withVoice.url);
+        setInstrUrl(withoutVoice.url);
         setStatus("ready");
       } catch (err) {
         console.error("Mix rendering failed:", err);
@@ -63,62 +69,55 @@ export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detect
 
     render();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderKey]);
+  }, []);
 
   useEffect(() => {
     return () => {
-      if (mixUrl) URL.revokeObjectURL(mixUrl);
+      if (vocalUrl) URL.revokeObjectURL(vocalUrl);
+      if (instrUrl) URL.revokeObjectURL(instrUrl);
     };
-  }, [mixUrl]);
+  }, [vocalUrl, instrUrl]);
+
+  // Keep voice toggle in sync without re-render
+  useEffect(() => {
+    if (vocalRef.current) vocalRef.current.volume = voiceOn ? 1 : 0;
+    if (instrRef.current) instrRef.current.volume = voiceOn ? 0 : 1;
+  }, [voiceOn]);
 
   const togglePlay = () => {
-    if (!mixUrl) return;
+    if (!vocalUrl || !instrUrl) return;
 
-    if (!audioRef.current) {
-      audioRef.current = new Audio(mixUrl);
-      audioRef.current.onended = () => setIsPlaying(false);
+    // Init audio elements on first play
+    if (!vocalRef.current) {
+      vocalRef.current = new Audio(vocalUrl);
+      instrRef.current = new Audio(instrUrl);
+
+      vocalRef.current.volume = voiceOn ? 1 : 0;
+      instrRef.current!.volume = voiceOn ? 0 : 1;
+
+      vocalRef.current.onended = () => setIsPlaying(false);
     }
 
     if (isPlaying) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+      vocalRef.current.pause();
+      instrRef.current!.pause();
+      vocalRef.current.currentTime = 0;
+      instrRef.current!.currentTime = 0;
       setIsPlaying(false);
     } else {
-      audioRef.current.play();
+      // Sync start
+      vocalRef.current.currentTime = 0;
+      instrRef.current!.currentTime = 0;
+      vocalRef.current.play();
+      instrRef.current!.play();
       setIsPlaying(true);
     }
   };
 
   const handleDownload = () => {
-    if (mixUrl) downloadWav(mixUrl);
+    const url = voiceOn ? vocalUrl : instrUrl;
+    if (url) downloadWav(url);
   };
-
-  const triggerReRender = () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-    setIsPlaying(false);
-    if (mixUrl) URL.revokeObjectURL(mixUrl);
-    setMixUrl(null);
-    setStatus("rendering");
-    hasRendered.current = false;
-    setRenderKey((k) => k + 1);
-  };
-
-  const handleVoiceToggle = () => {
-    setVoiceOn((v) => !v);
-  };
-
-  // Re-render when voice toggle changes
-  const prevVoiceOn = useRef(voiceOn);
-  useEffect(() => {
-    if (prevVoiceOn.current !== voiceOn) {
-      prevVoiceOn.current = voiceOn;
-      triggerReRender();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voiceOn]);
 
   if (status === "rendering") {
     return (
@@ -157,7 +156,7 @@ export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detect
 
       {/* Voice on/off toggle */}
       <button
-        onClick={handleVoiceToggle}
+        onClick={() => setVoiceOn((v) => !v)}
         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
           voiceOn
             ? "bg-neon-purple/20 border border-neon-purple text-neon-purple"

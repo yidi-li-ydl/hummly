@@ -408,7 +408,17 @@ export async function renderMix(
     peaking.connect(voiceGain);
     voiceGain.connect(offCtx.destination);
     voiceGain.connect(convolver);
-    voiceSource.start(0);
+
+    // Auto-align: shift entire recording so first detected note lands on its
+    // snapped grid position. No cutting — the whole audio moves as one piece.
+    if (originalNotes && originalNotes.length > 0 && notes.length > 0) {
+      const offset = notes[0].startTime - originalNotes[0].startTime;
+      const startAt = Math.max(0, offset);
+      const trimFrom = Math.max(0, -offset);
+      voiceSource.start(startAt, trimFrom);
+    } else {
+      voiceSource.start(0);
+    }
   }
 
   // --- Piano melody (replaces voice) ---
