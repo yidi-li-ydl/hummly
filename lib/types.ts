@@ -48,6 +48,8 @@ export type WizardStep = "record" | "processing" | "chords" | "drums" | "mix";
 
 export type ChordInstrument = "piano" | "guitar" | "strings" | "synth-pad";
 
+export type DrumKit = "acoustic-kit" | "LINN" | "CR78" | "Kit3" | "Kit8";
+
 export type MelodyVoice = "real" | "piano";
 
 export interface MixVolumes {
@@ -79,6 +81,7 @@ export interface HummlyState {
   selectedChords: ChordProgression | null;
   chordInstrument: ChordInstrument;
   melodyVoice: MelodyVoice;
+  drumKit: DrumKit;
   drumOptions: DrumStyle[];
   selectedDrums: DrumStyle | null;
   mixBuffer: AudioBuffer | null;
@@ -100,6 +103,7 @@ export type HummlyAction =
   | { type: "SET_CHORD_INSTRUMENT"; instrument: ChordInstrument }
   | { type: "SET_DRUM_OPTIONS"; options: DrumStyle[] }
   | { type: "SELECT_DRUMS"; style: DrumStyle }
+  | { type: "SET_DRUM_KIT"; kit: DrumKit }
   | { type: "SET_MIX"; buffer: AudioBuffer; url: string }
   | { type: "SET_MELODY_VOICE"; voice: MelodyVoice }
   | { type: "SET_ERROR"; error: string }

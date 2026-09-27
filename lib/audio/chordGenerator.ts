@@ -68,6 +68,10 @@ const MAJOR_PROGRESSIONS: ProgressionTemplate[] = [
   { name: "Classic Pop", description: "I - vi - IV - V", degrees: [0, 5, 3, 4] },
   { name: "Emotional", description: "vi - IV - I - V", degrees: [5, 3, 0, 4] },
   { name: "Jazz Lite", description: "ii - V - I - vi", degrees: [1, 4, 0, 5] },
+  { name: "Canon", description: "I - V - vi - iii - IV - I - IV - V", degrees: [0, 4, 5, 2, 3, 0, 3, 4] },
+  { name: "Rock Solid", description: "I - IV - V - I", degrees: [0, 3, 4, 0] },
+  { name: "Dreamy", description: "I - iii - vi - IV", degrees: [0, 2, 5, 3] },
+  { name: "Folk", description: "I - IV - I - V", degrees: [0, 3, 0, 4] },
 ];
 
 const MINOR_PROGRESSIONS: ProgressionTemplate[] = [
@@ -75,6 +79,10 @@ const MINOR_PROGRESSIONS: ProgressionTemplate[] = [
   { name: "Dramatic", description: "i - iv - VII - III", degrees: [0, 3, 6, 2] },
   { name: "Dark Drive", description: "i - VII - VI - VII", degrees: [0, 6, 5, 6] },
   { name: "Minor Classic", description: "i - iv - v - i", degrees: [0, 3, 4, 0] },
+  { name: "Andalusian", description: "i - VII - VI - V", degrees: [0, 6, 5, 4] },
+  { name: "Moody", description: "i - III - VII - iv", degrees: [0, 2, 6, 3] },
+  { name: "Cinematic", description: "i - VI - iv - VII", degrees: [0, 5, 3, 6] },
+  { name: "Grunge", description: "i - iv - III - VI", degrees: [0, 3, 2, 5] },
 ];
 
 export function generateChordProgressions(keyResult: KeyResult): ChordProgression[] {

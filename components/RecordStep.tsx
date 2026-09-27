@@ -52,9 +52,11 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
   const [phase, setPhase] = useState<"idle" | "countin" | "recording">("idle");
   const [countBeat, setCountBeat] = useState(0);
   const [currentBar, setCurrentBar] = useState(0);
+  const [currentBeat, setCurrentBeat] = useState(0); // 1-based beat within bar
   const [currentNote, setCurrentNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const recorderRef = useRef<RecorderHandle | null>(null);
+  const clickCtxRef = useRef<AudioContext | null>(null);
   const readingsRef = useRef<PitchReading[]>([]);
   const stopPitchRef = useRef<(() => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -82,6 +84,10 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
     if (autoStopTimerRef.current) {
       clearTimeout(autoStopTimerRef.current);
       autoStopTimerRef.current = null;
+    }
+    if (clickCtxRef.current && clickCtxRef.current.state !== "closed") {
+      clickCtxRef.current.close();
+      clickCtxRef.current = null;
     }
   }, []);
 
@@ -125,17 +131,20 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
       const recorder = await createRecorder();
       recorderRef.current = recorder;
 
+      // Separate AudioContext for the click track so it never bleeds into the recording
+      const clickCtx = new AudioContext();
+      clickCtxRef.current = clickCtx;
+
       // --- Count-in phase ---
       setPhase("countin");
       setCountBeat(0);
 
       const beatMs = (60 / bpm) * 1000;
-      const ctx = recorder.audioContext;
 
-      // Schedule beatsPerBar count-in clicks
-      const now = ctx.currentTime + 0.05;
+      // Schedule beatsPerBar count-in clicks on the isolated click context
+      const now = clickCtx.currentTime + 0.05;
       for (let i = 0; i < beatsPerBar; i++) {
-        scheduleClick(ctx, now + i * (60 / bpm), i === 0);
+        scheduleClick(clickCtx, now + i * (60 / bpm), i === 0);
       }
 
       // Visual beat counter during count-in
@@ -167,19 +176,19 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
         // Start recording
         recorder.startRecording();
 
-        // Start click track during recording
-        startClickTrack(ctx, bpm, beatsPerBar);
-
-        // Bar counter
-        const barDuration = (beatsPerBar * 60) / bpm;
+        // Bar & beat counter
+        const beatDuration = 60 / bpm;
+        const barDuration = beatsPerBar * beatDuration;
         const maxDuration = barDuration * TOTAL_BARS;
         const start = Date.now();
 
         timerRef.current = setInterval(() => {
           const sec = (Date.now() - start) / 1000;
           const bar = Math.min(Math.floor(sec / barDuration) + 1, TOTAL_BARS);
+          const beatInBar = Math.floor((sec % barDuration) / beatDuration) + 1;
           setCurrentBar(bar);
-        }, 100);
+          setCurrentBeat(beatInBar);
+        }, 50);
 
         // Auto-stop after 4 bars
         autoStopTimerRef.current = setTimeout(() => {
@@ -262,10 +271,12 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
         </div>
       )}
 
-      <WaveformVisualizer
-        analyserNode={recorderRef.current?.analyserNode ?? null}
-        isActive={phase === "recording"}
-      />
+      {phase !== "idle" && (
+        <WaveformVisualizer
+          analyserNode={recorderRef.current?.analyserNode ?? null}
+          isActive={phase === "recording"}
+        />
+      )}
 
       {/* Count-in display */}
       {phase === "countin" && (
@@ -275,21 +286,41 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
         </div>
       )}
 
-      {/* Live note display */}
+      {/* Visual metronome + note display */}
       {phase === "recording" && (
-        <div className="h-10 flex items-center justify-center">
-          {currentNote ? (
-            <span className="text-2xl font-bold text-neon-cyan">{currentNote}</span>
-          ) : (
-            <span className="text-text-secondary text-sm">Listening...</span>
-          )}
-        </div>
-      )}
-
-      {/* Bar counter */}
-      {phase === "recording" && (
-        <div className="text-text-secondary text-sm tabular-nums">
-          Bar {currentBar} / {TOTAL_BARS}
+        <div className="flex flex-col items-center gap-3">
+          {/* Beat dots */}
+          <div className="flex items-center gap-2">
+            {Array.from({ length: beatsPerBar }, (_, i) => {
+              const beatNum = i + 1;
+              const isActive = currentBeat === beatNum;
+              const isDownbeat = beatNum === 1;
+              return (
+                <div
+                  key={i}
+                  className={`rounded-full transition-all duration-100 ${
+                    isActive
+                      ? isDownbeat
+                        ? "w-5 h-5 bg-neon-cyan shadow-[0_0_12px_rgba(34,211,238,0.7)]"
+                        : "w-4 h-4 bg-neon-purple shadow-[0_0_10px_rgba(168,85,247,0.6)]"
+                      : "w-3 h-3 bg-surface-card border border-text-secondary/30"
+                  }`}
+                />
+              );
+            })}
+          </div>
+          {/* Bar counter */}
+          <div className="text-text-secondary text-xs tabular-nums">
+            Bar {currentBar} / {TOTAL_BARS}
+          </div>
+          {/* Current note */}
+          <div className="h-8 flex items-center justify-center">
+            {currentNote ? (
+              <span className="text-xl font-bold text-neon-cyan">{currentNote}</span>
+            ) : (
+              <span className="text-text-secondary text-sm">Listening...</span>
+            )}
+          </div>
         </div>
       )}
 

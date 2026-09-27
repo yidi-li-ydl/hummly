@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useMemo } from "react";
 import { renderMix, downloadWav } from "@/lib/audio/mixer";
 import { snapToGrid } from "@/lib/audio/noteQuantizer";
-import type { ChordInstrument, MelodyVoice, MixVolumes, QuantizedNote, ChordProgression, DrumStyle, KeyResult, PitchReading, VoiceEQ, VoicePcm } from "@/lib/types";
+import type { ChordInstrument, DrumKit, MelodyVoice, MixVolumes, QuantizedNote, ChordProgression, DrumStyle, KeyResult, PitchReading, VoiceEQ, VoicePcm } from "@/lib/types";
 
 interface Props {
   notes: QuantizedNote[];
@@ -16,20 +16,26 @@ interface Props {
   pitchReadings: PitchReading[];
   chordInstrument: ChordInstrument;
   melodyVoice: MelodyVoice;
+  drumKit: DrumKit;
   onMelodyVoiceChange: (voice: MelodyVoice) => void;
   onStartOver: () => void;
 }
 
-export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, melodyVoice, onMelodyVoiceChange, onStartOver }: Props) {
+export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, melodyVoice, drumKit, onMelodyVoiceChange, onStartOver }: Props) {
   const [status, setStatus] = useState<"rendering" | "ready" | "error">("rendering");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [mixUrl, setMixUrl] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [renderKey, setRenderKey] = useState(0);
-  const [volumes, setVolumes] = useState<MixVolumes>({ melody: 1, chords: 1, drums: 1 });
-  const [voiceEq, setVoiceEq] = useState<VoiceEQ>({ lowCut: 80, presence: 0 });
+  const [voiceOn, setVoiceOn] = useState(true);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const hasRendered = useRef(false);
+
+  const volumes: MixVolumes = useMemo(
+    () => ({ melody: voiceOn ? 1 : 0, chords: 1, drums: 1 }),
+    [voiceOn]
+  );
+  const voiceEq: VoiceEQ = { lowCut: 80, presence: 0 };
 
   // Snap melody to beat grid
   const snappedNotes = useMemo(() => snapToGrid(notes, bpm), [notes, bpm]);
@@ -43,7 +49,8 @@ export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detect
         const { url } = await renderMix(
           snappedNotes, chords, drums, undefined, bpm,
           voicePcm ?? undefined, pitchReadings, detectedKey,
-          chordInstrument, beatsPerBar, melodyVoice, volumes, voiceEq, notes
+          chordInstrument, beatsPerBar, "real", volumes, voiceEq, notes,
+          drumKit
         );
         setMixUrl(url);
         setStatus("ready");
@@ -99,11 +106,19 @@ export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detect
     setRenderKey((k) => k + 1);
   };
 
-  const handleMelodyVoiceToggle = (voice: MelodyVoice) => {
-    if (voice === melodyVoice) return;
-    onMelodyVoiceChange(voice);
-    triggerReRender();
+  const handleVoiceToggle = () => {
+    setVoiceOn((v) => !v);
   };
+
+  // Re-render when voice toggle changes
+  const prevVoiceOn = useRef(voiceOn);
+  useEffect(() => {
+    if (prevVoiceOn.current !== voiceOn) {
+      prevVoiceOn.current = voiceOn;
+      triggerReRender();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceOn]);
 
   if (status === "rendering") {
     return (
@@ -140,102 +155,24 @@ export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detect
         </p>
       </div>
 
-      {/* Melody voice toggle */}
-      <div className="flex rounded-lg overflow-hidden border border-surface-card">
-        <button
-          onClick={() => handleMelodyVoiceToggle("real")}
-          className={`px-4 py-2 text-sm font-medium transition-colors ${
-            melodyVoice === "real"
-              ? "bg-neon-purple text-white"
-              : "bg-surface-card text-text-secondary hover:text-text-primary"
-          }`}
-        >
-          Real Voice
-        </button>
-        <button
-          onClick={() => handleMelodyVoiceToggle("piano")}
-          className={`px-4 py-2 text-sm font-medium transition-colors ${
-            melodyVoice === "piano"
-              ? "bg-neon-purple text-white"
-              : "bg-surface-card text-text-secondary hover:text-text-primary"
-          }`}
-        >
-          Piano
-        </button>
-      </div>
-
-      {/* Volume sliders */}
-      <div className="w-full rounded-xl bg-surface-card border border-surface-card p-4">
-        <p className="text-xs text-text-secondary mb-3">Mix Levels</p>
-        {(["melody", "chords", "drums"] as const).map((track) => (
-          <div key={track} className="flex items-center gap-3 mb-2 last:mb-0">
-            <span className="text-xs text-text-secondary w-14 capitalize">{track}</span>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={volumes[track]}
-              onChange={(e) =>
-                setVolumes((v) => ({ ...v, [track]: parseFloat(e.target.value) }))
-              }
-              onMouseUp={triggerReRender}
-              onTouchEnd={triggerReRender}
-              className="flex-1 accent-neon-purple h-1"
-            />
-            <span className="text-xs text-text-secondary w-10 text-right font-mono">
-              {Math.round(volumes[track] * 100)}%
-            </span>
-          </div>
-        ))}
-
-        {/* Voice EQ sliders — only for real voice */}
-        {melodyVoice === "real" && (
-          <>
-            <div className="border-t border-surface-secondary mt-3 pt-3">
-              <p className="text-xs text-text-secondary mb-3">Voice EQ</p>
-              <div className="flex items-center gap-3 mb-2">
-                <span className="text-xs text-text-secondary w-14">Low Cut</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={200}
-                  step={10}
-                  value={voiceEq.lowCut}
-                  onChange={(e) =>
-                    setVoiceEq((eq) => ({ ...eq, lowCut: parseFloat(e.target.value) }))
-                  }
-                  onMouseUp={triggerReRender}
-                  onTouchEnd={triggerReRender}
-                  className="flex-1 accent-neon-purple h-1"
-                />
-                <span className="text-xs text-text-secondary w-10 text-right font-mono">
-                  {voiceEq.lowCut} Hz
-                </span>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-text-secondary w-14">Presence</span>
-                <input
-                  type="range"
-                  min={-6}
-                  max={12}
-                  step={1}
-                  value={voiceEq.presence}
-                  onChange={(e) =>
-                    setVoiceEq((eq) => ({ ...eq, presence: parseFloat(e.target.value) }))
-                  }
-                  onMouseUp={triggerReRender}
-                  onTouchEnd={triggerReRender}
-                  className="flex-1 accent-neon-purple h-1"
-                />
-                <span className="text-xs text-text-secondary w-10 text-right font-mono">
-                  {voiceEq.presence > 0 ? "+" : ""}{voiceEq.presence} dB
-                </span>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
+      {/* Voice on/off toggle */}
+      <button
+        onClick={handleVoiceToggle}
+        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+          voiceOn
+            ? "bg-neon-purple/20 border border-neon-purple text-neon-purple"
+            : "bg-surface-card border border-surface-card text-text-secondary hover:text-text-primary"
+        }`}
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          {voiceOn ? (
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+          ) : (
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+          )}
+        </svg>
+        {voiceOn ? "Voice On" : "Voice Off"}
+      </button>
 
       {/* Play button */}
       <button
@@ -257,21 +194,6 @@ export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detect
           </svg>
         )}
       </button>
-
-      {/* Melody display */}
-      <div className="w-full rounded-xl bg-surface-card border border-surface-card p-4">
-        <p className="text-xs text-text-secondary mb-2">Your melody (snapped to beat)</p>
-        <div className="flex flex-wrap gap-1.5">
-          {snappedNotes.map((note, i) => (
-            <span
-              key={i}
-              className="px-2 py-1 rounded bg-neon-purple/20 text-neon-purple text-xs font-mono"
-            >
-              {note.name}
-            </span>
-          ))}
-        </div>
-      </div>
 
       <div className="flex gap-3 mt-2">
         <button

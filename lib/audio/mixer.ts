@@ -1,8 +1,9 @@
 import * as Tone from "tone";
 import toWav from "audiobuffer-to-wav";
-import type { ChordInstrument, ChordProgression, DrumStyle, KeyResult, MelodyVoice, MixVolumes, PitchReading, QuantizedNote, VoiceEQ, VoicePcm } from "../types";
+import type { ChordInstrument, ChordProgression, DrumKit, DrumStyle, KeyResult, MelodyVoice, MixVolumes, PitchReading, QuantizedNote, VoiceEQ, VoicePcm } from "../types";
 import { playGuitarChord, playStringsChord, playSynthPadChord } from "./chordSynths";
-import { beatAlignVoice } from "./autotune";
+
+
 
 import { loadSampleBank, findNearestPianoSample, type SampleBank, type DecodedSample } from "./sampleLoader";
 
@@ -251,11 +252,11 @@ export async function previewChords(
   cleanupTimers.push(timer);
 }
 
-export async function previewDrums(style: DrumStyle): Promise<void> {
+export async function previewDrums(style: DrumStyle, drumKit: DrumKit = "acoustic-kit"): Promise<void> {
   await ensureToneStarted();
   disposeActiveSynths();
 
-  const bank = await loadSampleBank();
+  const bank = await loadSampleBank(drumKit);
   const ctx = Tone.getContext().rawContext as AudioContext;
 
   const kickBuf = makeBuf(ctx, bank.kick);
@@ -322,7 +323,8 @@ export async function renderMix(
   melodyVoice: MelodyVoice = "real",
   volumes?: MixVolumes,
   voiceEq?: VoiceEQ,
-  originalNotes?: QuantizedNote[]
+  originalNotes?: QuantizedNote[],
+  drumKit: DrumKit = "acoustic-kit"
 ): Promise<{ buffer: AudioBuffer; url: string }> {
   const vol = volumes ?? { melody: 1, chords: 1, drums: 1 };
   const eq = voiceEq ?? { lowCut: 80, presence: 0 };
@@ -332,7 +334,7 @@ export async function renderMix(
   const renderDuration = barDuration * totalBars + 2;
 
   // Load instrument samples
-  const bank = await loadSampleBank();
+  const bank = await loadSampleBank(drumKit);
 
   // Use raw PCM voice data directly
   let voiceChannels: Float32Array[] | null = null;
@@ -365,17 +367,25 @@ export async function renderMix(
   const snareBuf = makeBuf(offCtx, bank.snare);
   const hihatBuf = makeBuf(offCtx, bank.hihat);
 
-  // --- Autotuned voice ---
+  // --- Raw voice (no processing) ---
   if (melodyVoice === "real" && voiceChannels && voiceLength > 0) {
-    // Beat-align voice when original (pre-snap) notes are available
-    let finalChannels = voiceChannels;
-    if (originalNotes && originalNotes.length > 0 && notes.length === originalNotes.length) {
-      finalChannels = beatAlignVoice(voiceChannels, voiceSampleRate, originalNotes, notes);
+    // Normalize to peak 0.9
+    let peak = 0;
+    for (const ch of voiceChannels) {
+      for (let i = 0; i < ch.length; i++) {
+        const abs = Math.abs(ch[i]);
+        if (abs > peak) peak = abs;
+      }
     }
+    const normGain = peak > 0.001 ? 0.9 / peak : 1;
 
-    const voiceBuf = offCtx.createBuffer(finalChannels.length, finalChannels[0].length, voiceSampleRate);
-    for (let ch = 0; ch < finalChannels.length; ch++) {
-      voiceBuf.getChannelData(ch).set(finalChannels[ch]);
+    const voiceBuf = offCtx.createBuffer(voiceChannels.length, voiceLength, voiceSampleRate);
+    for (let ch = 0; ch < voiceChannels.length; ch++) {
+      const data = voiceBuf.getChannelData(ch);
+      const src = voiceChannels[ch];
+      for (let i = 0; i < src.length; i++) {
+        data[i] = src[i] * normGain;
+      }
     }
     const voiceSource = offCtx.createBufferSource();
     voiceSource.buffer = voiceBuf;
@@ -392,12 +402,12 @@ export async function renderMix(
     peaking.gain.value = eq.presence;
 
     const voiceGain = offCtx.createGain();
-    voiceGain.gain.value = 2.5 * vol.melody;
+    voiceGain.gain.value = 1.3 * vol.melody;
     voiceSource.connect(highpass);
     highpass.connect(peaking);
     peaking.connect(voiceGain);
     voiceGain.connect(offCtx.destination);
-    voiceGain.connect(convolver); // slight reverb on voice
+    voiceGain.connect(convolver);
     voiceSource.start(0);
   }
 
@@ -420,7 +430,7 @@ export async function renderMix(
       const chord = progression.chords[bar % progression.chords.length];
       const t = bar * barDuration;
       for (const midi of chord.notes) {
-        playPianoNote(offCtx, pianoBuffers, bank, midi, t, barDuration * 0.9, offCtx.destination, convolver, 0.2 * vol.chords);
+        playPianoNote(offCtx, pianoBuffers, bank, midi, t, barDuration * 0.9, offCtx.destination, convolver, 0.18 * vol.chords);
       }
     }
   } else {
@@ -432,7 +442,7 @@ export async function renderMix(
     for (let bar = 0; bar < totalBars; bar++) {
       const chord = progression.chords[bar % progression.chords.length];
       const t = bar * barDuration;
-      playFn(offCtx, chord.notes, t, barDuration * 0.9, offCtx.destination, convolver, 0.2 * vol.chords);
+      playFn(offCtx, chord.notes, t, barDuration * 0.9, offCtx.destination, convolver, 0.18 * vol.chords);
     }
   }
 
@@ -451,9 +461,9 @@ export async function renderMix(
 
   // --- Drums (sample-based) ---
   const drumSchedule = buildDrumSchedule(drumStyle.pattern, bpm, totalBars, 0, beatsPerBar);
-  drumSchedule.kick.forEach((t) => playSample(offCtx, kickBuf, t, offCtx.destination, 0.8 * vol.drums));
-  drumSchedule.snare.forEach((t) => playSample(offCtx, snareBuf, t, offCtx.destination, 0.65 * vol.drums));
-  drumSchedule.hihat.forEach((t) => playSample(offCtx, hihatBuf, t, offCtx.destination, 0.45 * vol.drums));
+  drumSchedule.kick.forEach((t) => playSample(offCtx, kickBuf, t, offCtx.destination, 0.6 * vol.drums));
+  drumSchedule.snare.forEach((t) => playSample(offCtx, snareBuf, t, offCtx.destination, 0.5 * vol.drums));
+  drumSchedule.hihat.forEach((t) => playSample(offCtx, hihatBuf, t, offCtx.destination, 0.35 * vol.drums));
 
   // --- Render ---
   const renderedBuffer = await offCtx.startRendering();

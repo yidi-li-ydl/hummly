@@ -16,6 +16,7 @@ import type {
   KeyResult,
   ChordInstrument,
   ChordProgression,
+  DrumKit,
   DrumStyle,
   MelodyVoice,
 } from "@/lib/types";
@@ -32,6 +33,7 @@ const initialState: HummlyState = {
   selectedChords: null,
   chordInstrument: "piano",
   melodyVoice: "real",
+  drumKit: "acoustic-kit",
   drumOptions: [],
   selectedDrums: null,
   mixBuffer: null,
@@ -67,6 +69,8 @@ function reducer(state: HummlyState, action: HummlyAction): HummlyState {
       return { ...state, drumOptions: action.options };
     case "SELECT_DRUMS":
       return { ...state, selectedDrums: action.style };
+    case "SET_DRUM_KIT":
+      return { ...state, drumKit: action.kit };
     case "SET_MELODY_VOICE":
       return { ...state, melodyVoice: action.voice };
     case "SET_MIX":
@@ -118,8 +122,9 @@ export default function StepWizard() {
     dispatch({ type: "SET_STEP", step: "drums" });
   }, []);
 
-  const handleDrumSelect = useCallback((style: DrumStyle) => {
+  const handleDrumSelect = useCallback((style: DrumStyle, kit: DrumKit) => {
     dispatch({ type: "SELECT_DRUMS", style });
+    dispatch({ type: "SET_DRUM_KIT", kit });
     dispatch({ type: "SET_STEP", step: "mix" });
   }, []);
 
@@ -175,6 +180,7 @@ export default function StepWizard() {
           pitchReadings={state.pitchReadings}
           chordInstrument={state.chordInstrument}
           melodyVoice={state.melodyVoice}
+          drumKit={state.drumKit}
           onMelodyVoiceChange={handleMelodyVoiceChange}
           onStartOver={handleStartOver}
         />

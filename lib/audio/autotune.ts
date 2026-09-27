@@ -115,11 +115,14 @@ export function autotuneVoice(
 }
 
 /**
- * Time-warp voice audio so note onsets/offsets align with a beat grid.
+ * Time-warp voice audio so note onsets align with a beat grid.
  *
- * Uses granular overlap-add with a piecewise-linear time map built from
- * the correspondence between original and grid-snapped notes. Pitch is
- * preserved — only timing changes.
+ * Uses continuous sample-by-sample resampling with a piecewise-linear time map.
+ * For each output sample, the corresponding input position is calculated via
+ * linear interpolation between anchor points (note onsets). No cutting, no
+ * windowing, no grains — just reads the original samples at slightly shifted
+ * positions. For typical timing corrections (<2%), the pitch change is
+ * imperceptible.
  */
 export function beatAlignVoice(
   voiceChannels: Float32Array[],
@@ -129,43 +132,65 @@ export function beatAlignVoice(
 ): Float32Array[] {
   if (originalNotes.length === 0 || snappedNotes.length === 0) return voiceChannels;
 
-  // --- 1. Build control points ---
-  interface CP { out: number; in_: number }
-  const cps: CP[] = [];
+  const inputLen = voiceChannels[0].length;
+  const numChannels = voiceChannels.length;
 
+  // Build anchor points: output time → input time
+  interface Anchor { out: number; in_: number }
+  const anchors: Anchor[] = [];
+
+  // First anchor: start of audio (identity before first note)
+  const firstOrigT = originalNotes[0].startTime;
+  const firstSnapT = snappedNotes[0].startTime;
+  const preOffset = firstSnapT - firstOrigT;
+
+  // Anchor at t=0: if voice needs to shift right, output t=0 maps to input t=0
+  anchors.push({ out: 0, in_: Math.max(0, -preOffset) });
+
+  // Anchor for each note onset
   for (let i = 0; i < originalNotes.length; i++) {
-    const orig = originalNotes[i];
-    const snap = snappedNotes[i];
-    cps.push({ out: snap.startTime, in_: orig.startTime });
-    cps.push({
-      out: snap.startTime + snap.duration,
-      in_: orig.startTime + orig.duration,
+    anchors.push({
+      out: snappedNotes[i].startTime,
+      in_: originalNotes[i].startTime,
     });
   }
 
-  cps.sort((a, b) => a.out - b.out);
+  // Final anchor: end of audio
+  const lastOrig = originalNotes[originalNotes.length - 1];
+  const lastSnap = snappedNotes[snappedNotes.length - 1];
+  const lastOrigEnd = lastOrig.startTime + lastOrig.duration;
+  const lastSnapEnd = lastSnap.startTime + lastSnap.duration;
+  anchors.push({ out: lastSnapEnd, in_: lastOrigEnd });
 
-  // Deduplicate (within 1ms)
-  const pts: CP[] = [cps[0]];
-  for (let i = 1; i < cps.length; i++) {
-    if (cps[i].out - pts[pts.length - 1].out > 0.001) pts.push(cps[i]);
-  }
-
-  // Safety: input times must be monotonically non-decreasing
-  for (let i = 1; i < pts.length; i++) {
-    if (pts[i].in_ < pts[i - 1].in_) return voiceChannels;
-  }
-
-  // --- 2. Time-warp function (output time → input time) ---
-  function mapTime(t: number): number {
-    if (t <= pts[0].out) {
-      return pts[0].in_ + (t - pts[0].out); // pre-roll: identity + offset
+  // Sort and deduplicate
+  anchors.sort((a, b) => a.out - b.out);
+  const pts: Anchor[] = [anchors[0]];
+  for (let i = 1; i < anchors.length; i++) {
+    if (anchors[i].out - pts[pts.length - 1].out > 0.0005) {
+      // Ensure input times are monotonically non-decreasing
+      if (anchors[i].in_ >= pts[pts.length - 1].in_) {
+        pts.push(anchors[i]);
+      }
     }
+  }
+
+  // If we couldn't build a valid monotonic map, return original
+  if (pts.length < 2) return voiceChannels;
+
+  // Output length
+  const outputDuration = Math.max(
+    inputLen / voiceSampleRate,
+    lastSnapEnd + 0.5
+  );
+  const outputLen = Math.ceil(outputDuration * voiceSampleRate);
+
+  // Time map function: output time → input time (piecewise linear)
+  function mapTime(t: number): number {
+    if (t <= pts[0].out) return pts[0].in_ + (t - pts[0].out);
     if (t >= pts[pts.length - 1].out) {
       const last = pts[pts.length - 1];
-      return last.in_ + (t - last.out); // tail: identity + offset
+      return last.in_ + (t - last.out);
     }
-    // Binary search for bracketing interval
     let lo = 0;
     let hi = pts.length - 1;
     while (hi - lo > 1) {
@@ -179,46 +204,28 @@ export function beatAlignVoice(
     return p0.in_ + ratio * (p1.in_ - p0.in_);
   }
 
-  // --- 3. Granular overlap-add ---
-  const grainDuration = 0.03;
-  const hopDuration = 0.015;
-  const grainSamples = Math.floor(grainDuration * voiceSampleRate);
-  const hopSamples = Math.floor(hopDuration * voiceSampleRate);
-  const inputLen = voiceChannels[0].length;
-  const numChannels = voiceChannels.length;
-
-  const lastSnap = snappedNotes[snappedNotes.length - 1];
-  const outputDuration = Math.max(
-    inputLen / voiceSampleRate,
-    lastSnap.startTime + lastSnap.duration + 0.5
-  );
-  const outputLen = Math.ceil(outputDuration * voiceSampleRate);
-
-  // Periodic Hann window (/N, not /(N-1))
-  const hann = new Float32Array(grainSamples);
-  for (let i = 0; i < grainSamples; i++) {
-    hann[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / grainSamples));
-  }
-
+  // Resample: for each output sample, read from the mapped input position
   const output: Float32Array[] = [];
-  for (let ch = 0; ch < numChannels; ch++) output.push(new Float32Array(outputLen));
+  for (let ch = 0; ch < numChannels; ch++) {
+    const src = voiceChannels[ch];
+    const dst = new Float32Array(outputLen);
 
-  for (let outStart = 0; outStart < outputLen; outStart += hopSamples) {
-    const outTime = outStart / voiceSampleRate;
-    const inTime = mapTime(outTime);
-    const inStart = Math.round(inTime * voiceSampleRate);
+    for (let i = 0; i < outputLen; i++) {
+      const outTime = i / voiceSampleRate;
+      const inTime = mapTime(outTime);
+      const inPos = inTime * voiceSampleRate;
 
-    for (let ch = 0; ch < numChannels; ch++) {
-      const src = voiceChannels[ch];
-      const dst = output[ch];
-      for (let i = 0; i < grainSamples; i++) {
-        const inPos = inStart + i;
-        const outPos = outStart + i;
-        if (inPos >= 0 && inPos < inputLen && outPos < outputLen) {
-          dst[outPos] += src[inPos] * hann[i];
-        }
+      // Linear interpolation
+      const idx = Math.floor(inPos);
+      const frac = inPos - idx;
+      if (idx >= 0 && idx + 1 < inputLen) {
+        dst[i] = src[idx] * (1 - frac) + src[idx + 1] * frac;
+      } else if (idx >= 0 && idx < inputLen) {
+        dst[i] = src[idx];
       }
     }
+
+    output.push(dst);
   }
 
   return output;

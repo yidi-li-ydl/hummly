@@ -2,18 +2,27 @@
 
 import { useState } from "react";
 import { previewDrums, stopPreview } from "@/lib/audio/mixer";
-import type { DrumStyle } from "@/lib/types";
+import type { DrumKit, DrumStyle } from "@/lib/types";
+
+const DRUM_KITS: { id: DrumKit; label: string; description: string }[] = [
+  { id: "acoustic-kit", label: "Acoustic", description: "Natural drum kit" },
+  { id: "LINN", label: "LinnDrum", description: "Classic 80s" },
+  { id: "CR78", label: "CR-78", description: "Vintage analog" },
+  { id: "Kit3", label: "Studio", description: "Clean studio kit" },
+  { id: "Kit8", label: "Punchy", description: "Tight & punchy" },
+];
 
 interface Props {
   options: DrumStyle[];
   beatsPerBar: number;
-  onSelect: (style: DrumStyle) => void;
+  onSelect: (style: DrumStyle, kit: DrumKit) => void;
 }
 
 export default function DrumStep({ options, beatsPerBar, onSelect }: Props) {
   const filtered = options.filter((s) => s.beatsPerBar === beatsPerBar);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const [selectedKit, setSelectedKit] = useState<DrumKit>("acoustic-kit");
 
   const handlePreview = async (index: number) => {
     if (previewIndex === index) {
@@ -22,20 +31,37 @@ export default function DrumStep({ options, beatsPerBar, onSelect }: Props) {
       return;
     }
     setPreviewIndex(index);
-    await previewDrums(filtered[index]);
+    await previewDrums(filtered[index], selectedKit);
     setPreviewIndex(null);
   };
 
   const handleSelect = (index: number) => {
     setSelected(index);
     stopPreview();
-    onSelect(filtered[index]);
+    onSelect(filtered[index], selectedKit);
   };
 
   return (
     <div className="flex flex-col gap-6">
       <div className="text-center">
-        <p className="text-text-secondary text-xs">Choose a drum style</p>
+        <p className="text-text-secondary text-xs">Choose a drum kit & style</p>
+      </div>
+
+      <div className="flex justify-center gap-2 flex-wrap">
+        {DRUM_KITS.map((kit) => (
+          <button
+            key={kit.id}
+            onClick={() => setSelectedKit(kit.id)}
+            className={`flex flex-col items-center px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+              selectedKit === kit.id
+                ? "bg-neon-pink/20 border border-neon-pink text-neon-pink"
+                : "bg-surface-card border border-surface-card hover:border-neon-pink/40 text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            <span>{kit.label}</span>
+            <span className="text-[10px] opacity-60">{kit.description}</span>
+          </button>
+        ))}
       </div>
 
       <div className="grid gap-3">

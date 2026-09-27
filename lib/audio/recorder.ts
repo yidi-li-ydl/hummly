@@ -13,7 +13,7 @@ export async function createRecorder(): Promise<RecorderHandle> {
     audio: {
       echoCancellation: false,
       noiseSuppression: false,
-      autoGainControl: false,
+      autoGainControl: true,
     },
   });
   const audioContext = new AudioContext();

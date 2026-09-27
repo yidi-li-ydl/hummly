@@ -1,14 +1,22 @@
 /**
  * Loads and caches instrument samples for realistic playback.
  * Piano: Salamander Grand Piano samples from tonejs.github.io CDN
- * Drums: Synthesized one-shot samples (high-quality synthesis)
+ * Drums: Real samples from tonejs.github.io/audio/drum-samples CDN
  */
+
+import type { DrumKit } from "../types";
 
 export interface DecodedSample {
   channels: Float32Array[];
   sampleRate: number;
   length: number;
   midiNote: number;
+}
+
+export interface DrumSamples {
+  kick: DecodedSample;
+  snare: DecodedSample;
+  hihat: DecodedSample;
 }
 
 export interface SampleBank {
@@ -30,8 +38,10 @@ const PIANO_NOTES = [
 ];
 
 const SALAMANDER_URL = "https://tonejs.github.io/audio/salamander/";
+const DRUM_SAMPLES_URL = "https://tonejs.github.io/audio/drum-samples/";
 
-let cached: SampleBank | null = null;
+let cachedPiano: DecodedSample[] | null = null;
+const cachedDrumKits = new Map<DrumKit, DrumSamples>();
 
 function extractChannels(buf: AudioBuffer): Float32Array[] {
   const chs: Float32Array[] = [];
@@ -41,58 +51,49 @@ function extractChannels(buf: AudioBuffer): Float32Array[] {
   return chs;
 }
 
-function synthKick(): DecodedSample {
-  const sr = 44100;
-  const len = Math.floor(sr * 0.4);
-  const data = new Float32Array(len);
-  for (let i = 0; i < len; i++) {
-    const t = i / sr;
-    const freq = 40 + 110 * Math.exp(-t * 35);
-    const env = Math.exp(-t * 7) * 0.85;
-    const click = i < sr * 0.003 ? (1 - i / (sr * 0.003)) * 0.25 : 0;
-    data[i] =
-      Math.sin(2 * Math.PI * freq * t + Math.sin(2 * Math.PI * freq * 0.5 * t) * 0.3) * env +
-      click;
-  }
-  return { channels: [data], sampleRate: sr, length: len, midiNote: 0 };
-}
-
-function synthSnare(): DecodedSample {
-  const sr = 44100;
-  const len = Math.floor(sr * 0.25);
-  const data = new Float32Array(len);
-  for (let i = 0; i < len; i++) {
-    const t = i / sr;
-    const body = Math.sin(2 * Math.PI * 180 * t) * Math.exp(-t * 25) * 0.3;
-    const noise = (Math.random() * 2 - 1) * Math.exp(-t * 12) * 0.3;
-    const snap = (Math.random() * 2 - 1) * Math.exp(-t * 60) * 0.25;
-    data[i] = body + noise + snap;
-  }
-  return { channels: [data], sampleRate: sr, length: len, midiNote: 0 };
-}
-
-function synthHihat(): DecodedSample {
-  const sr = 44100;
-  const len = Math.floor(sr * 0.08);
-  const data = new Float32Array(len);
-  const freqs = [3500, 5000, 7500, 10000];
-  for (let i = 0; i < len; i++) {
-    const t = i / sr;
-    let sum = 0;
-    for (const f of freqs) {
-      sum += Math.sin(2 * Math.PI * f * t + Math.random() * 0.1) * 0.12;
-    }
-    sum += (Math.random() * 2 - 1) * 0.12;
-    data[i] = sum * Math.exp(-t * 55);
-  }
-  return { channels: [data], sampleRate: sr, length: len, midiNote: 0 };
-}
-
-export async function loadSampleBank(): Promise<SampleBank> {
-  if (cached) return cached;
+async function loadDrumKit(kit: DrumKit): Promise<DrumSamples> {
+  const existing = cachedDrumKits.get(kit);
+  if (existing) return existing;
 
   const ctx = new AudioContext();
+  const instruments = ["kick", "snare", "hihat"] as const;
+  const results = await Promise.all(
+    instruments.map(async (inst) => {
+      const res = await fetch(`${DRUM_SAMPLES_URL}${kit}/${inst}.mp3`);
+      const ab = await res.arrayBuffer();
+      const buf = await ctx.decodeAudioData(ab);
+      return {
+        channels: extractChannels(buf),
+        sampleRate: buf.sampleRate,
+        length: buf.length,
+        midiNote: 0,
+      } as DecodedSample;
+    })
+  );
+  await ctx.close();
 
+  const samples: DrumSamples = {
+    kick: results[0],
+    snare: results[1],
+    hihat: results[2],
+  };
+  cachedDrumKits.set(kit, samples);
+  return samples;
+}
+
+export async function loadSampleBank(drumKit: DrumKit = "acoustic-kit"): Promise<SampleBank> {
+  const [piano, drums] = await Promise.all([
+    loadPiano(),
+    loadDrumKit(drumKit),
+  ]);
+
+  return { piano, ...drums };
+}
+
+async function loadPiano(): Promise<DecodedSample[]> {
+  if (cachedPiano) return cachedPiano;
+
+  const ctx = new AudioContext();
   const pianoPromises = PIANO_NOTES.map(async (n) => {
     const res = await fetch(`${SALAMANDER_URL}${n.name}.mp3`);
     const ab = await res.arrayBuffer();
@@ -105,12 +106,12 @@ export async function loadSampleBank(): Promise<SampleBank> {
     } as DecodedSample;
   });
 
-  const piano = await Promise.all(pianoPromises);
+  cachedPiano = await Promise.all(pianoPromises);
   await ctx.close();
-
-  cached = { piano, kick: synthKick(), snare: synthSnare(), hihat: synthHihat() };
-  return cached;
+  return cachedPiano;
 }
+
+export { loadDrumKit };
 
 export function findNearestPianoSample(
   bank: SampleBank,

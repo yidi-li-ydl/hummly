@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { previewChords, stopPreview } from "@/lib/audio/mixer";
+import { generateChordProgressions } from "@/lib/audio/chordGenerator";
 import type { ChordInstrument, ChordProgression, KeyResult } from "@/lib/types";
 
 const INSTRUMENTS: { id: ChordInstrument; label: string; icon: string }[] = [
@@ -21,6 +22,16 @@ export default function ChordStep({ options, detectedKey, onSelect }: Props) {
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [selectedInstrument, setSelectedInstrument] = useState<ChordInstrument>("piano");
+  const [mode, setMode] = useState<"major" | "minor">(detectedKey.mode);
+
+  const currentKey: KeyResult = useMemo(
+    () => ({ ...detectedKey, mode }),
+    [detectedKey, mode]
+  );
+  const currentOptions = useMemo(
+    () => (mode === detectedKey.mode ? options : generateChordProgressions(currentKey)),
+    [mode, detectedKey.mode, options, currentKey]
+  );
 
   const handlePreview = async (index: number) => {
     if (previewIndex === index) {
@@ -29,14 +40,22 @@ export default function ChordStep({ options, detectedKey, onSelect }: Props) {
       return;
     }
     setPreviewIndex(index);
-    await previewChords(options[index], selectedInstrument);
+    await previewChords(currentOptions[index], selectedInstrument);
     setPreviewIndex(null);
   };
 
   const handleSelect = (index: number) => {
     setSelected(index);
     stopPreview();
-    onSelect(options[index], selectedInstrument);
+    onSelect(currentOptions[index], selectedInstrument);
+  };
+
+  const handleModeToggle = (newMode: "major" | "minor") => {
+    if (newMode === mode) return;
+    setMode(newMode);
+    setSelected(null);
+    setPreviewIndex(null);
+    stopPreview();
   };
 
   return (
@@ -48,7 +67,22 @@ export default function ChordStep({ options, detectedKey, onSelect }: Props) {
             {detectedKey.key} {detectedKey.mode}
           </span>
         </p>
-        <p className="text-text-secondary text-xs mt-1">Choose a chord progression</p>
+        <div className="flex justify-center gap-2 mt-2">
+          {(["major", "minor"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => handleModeToggle(m)}
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                mode === m
+                  ? "bg-neon-cyan/20 border border-neon-cyan text-neon-cyan"
+                  : "bg-surface-card border border-surface-card hover:border-neon-cyan/40 text-text-secondary"
+              }`}
+            >
+              {m === "major" ? "Major" : "Minor"}
+            </button>
+          ))}
+        </div>
+        <p className="text-text-secondary text-xs mt-2">Choose a chord progression</p>
       </div>
 
       <div className="flex justify-center gap-2">
@@ -71,7 +105,7 @@ export default function ChordStep({ options, detectedKey, onSelect }: Props) {
       </div>
 
       <div className="grid gap-3">
-        {options.map((prog, i) => (
+        {currentOptions.map((prog, i) => (
           <div
             key={i}
             className={`relative p-4 rounded-xl border transition-all cursor-pointer ${
