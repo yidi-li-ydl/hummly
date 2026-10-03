@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { quantizeNotes } from "@/lib/audio/noteQuantizer";
 import { detectKey } from "@/lib/audio/keyDetector";
 import { generateChordProgressions } from "@/lib/audio/chordGenerator";
+import { detectBpmFromNotes } from "@/lib/audio/bpmDetector";
 import { DRUM_STYLES } from "@/lib/audio/drumPatterns";
 import type { PitchReading, QuantizedNote, KeyResult, ChordProgression, DrumStyle } from "@/lib/types";
 
@@ -13,7 +14,8 @@ interface Props {
     notes: QuantizedNote[],
     key: KeyResult,
     chordOptions: ChordProgression[],
-    drumOptions: DrumStyle[]
+    drumOptions: DrumStyle[],
+    detectedBpm: number
   ) => void;
   onError: (error: string) => void;
 }
@@ -21,6 +23,7 @@ interface Props {
 const STAGES = [
   "Extracting notes from pitch data...",
   "Detecting musical key...",
+  "Detecting tempo...",
   "Generating chord progressions...",
   "Preparing drum patterns...",
 ];
@@ -50,17 +53,22 @@ export default function ProcessingStep({ readings, onComplete, onError }: Props)
         await delay(400);
         const key = detectKey(notes);
 
-        // Stage 2: Generate chords
+        // Stage 2: Detect BPM
         setStage(2);
+        await delay(400);
+        const detectedBpm = detectBpmFromNotes(notes);
+
+        // Stage 3: Generate chords
+        setStage(3);
         await delay(400);
         const chordOptions = generateChordProgressions(key);
 
-        // Stage 3: Prepare drums
-        setStage(3);
+        // Stage 4: Prepare drums
+        setStage(4);
         await delay(400);
         const drumOptions = DRUM_STYLES;
 
-        onComplete(notes, key, chordOptions, drumOptions);
+        onComplete(notes, key, chordOptions, drumOptions, detectedBpm);
       } catch {
         onError("Analysis failed. Please try recording again.");
       }
@@ -85,7 +93,7 @@ export default function ProcessingStep({ readings, onComplete, onError }: Props)
                     : "bg-surface-card text-text-secondary"
               }`}
             >
-              {i < stage ? "✓" : i + 1}
+              {i < stage ? "\u2713" : i + 1}
             </div>
             <span
               className={`text-sm transition-colors ${

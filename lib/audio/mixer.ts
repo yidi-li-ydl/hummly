@@ -252,7 +252,7 @@ export async function previewChords(
   cleanupTimers.push(timer);
 }
 
-export async function previewDrums(style: DrumStyle, drumKit: DrumKit = "acoustic-kit"): Promise<void> {
+export async function previewDrums(style: DrumStyle, drumKit: DrumKit = "acoustic-kit", bpmOverride?: number): Promise<void> {
   await ensureToneStarted();
   disposeActiveSynths();
 
@@ -265,7 +265,8 @@ export async function previewDrums(style: DrumStyle, drumKit: DrumKit = "acousti
 
   const now = ctx.currentTime + 0.1;
   const bpb = style.beatsPerBar ?? 4;
-  const schedule = buildDrumSchedule(style.pattern, style.bpm, 2, now, bpb);
+  const bpm = bpmOverride ?? style.bpm;
+  const schedule = buildDrumSchedule(style.pattern, bpm, 2, now, bpb);
 
   schedule.kick.forEach((t) => {
     const s = ctx.createBufferSource();
@@ -300,7 +301,7 @@ export async function previewDrums(style: DrumStyle, drumKit: DrumKit = "acousti
     activeSourceNodes.push(s);
   });
 
-  const barDuration = (bpb * 60) / style.bpm;
+  const barDuration = (bpb * 60) / bpm;
   const timer = setTimeout(() => disposeActiveSynths(), barDuration * 2 * 1000 + 1000);
   cleanupTimers.push(timer);
 }
@@ -311,8 +312,9 @@ export async function previewDrums(style: DrumStyle, drumKit: DrumKit = "acousti
 
 export async function renderMix(
   notes: QuantizedNote[],
-  progression: ChordProgression,
-  drumStyle: DrumStyle,
+  progression?: ChordProgression,
+  progressionB?: ChordProgression,
+  drumStyle?: DrumStyle,
   suggestedNotes?: QuantizedNote[],
   bpmOverride?: number,
   voicePcm?: VoicePcm,
@@ -328,9 +330,14 @@ export async function renderMix(
 ): Promise<{ buffer: AudioBuffer; url: string }> {
   const vol = volumes ?? { melody: 1, chords: 1, drums: 1 };
   const eq = voiceEq ?? { lowCut: 80, presence: 0 };
-  const bpm = bpmOverride ?? drumStyle.bpm;
+  const bpm = bpmOverride ?? drumStyle?.bpm ?? 100;
   const barDuration = (beatsPerBar * 60) / bpm;
-  const totalBars = 4;
+
+  // Calculate bar count from voice duration, minimum 4
+  const voiceDuration = voicePcm
+    ? voicePcm.channels[0].length / voicePcm.sampleRate
+    : 0;
+  const totalBars = Math.max(4, Math.ceil(voiceDuration / barDuration));
   const renderDuration = barDuration * totalBars + 2;
 
   // Load instrument samples
@@ -434,25 +441,45 @@ export async function renderMix(
     }
   }
 
-  // --- Chords (instrument-dependent) ---
-  if (chordInstrument === "piano") {
-    for (let bar = 0; bar < totalBars; bar++) {
-      const chord = progression.chords[bar % progression.chords.length];
-      const t = bar * barDuration;
-      for (const midi of chord.notes) {
-        playPianoNote(offCtx, pianoBuffers, bank, midi, t, barDuration * 0.9, offCtx.destination, convolver, 0.18 * vol.chords);
+  // --- Chords (instrument-dependent), alternating A/B sections ---
+  if (progression) {
+    const progALen = progression.chords.length;
+    const progBLen = progressionB ? progressionB.chords.length : progALen;
+    // Section length = length of the A progression (typically 4 bars)
+    const sectionLen = progALen;
+
+    function chordForBar(bar: number) {
+      if (!progressionB) {
+        return progression!.chords[bar % progALen];
+      }
+      // Alternate A/B every sectionLen bars
+      const section = Math.floor(bar / sectionLen) % 2;
+      if (section === 0) {
+        return progression!.chords[bar % progALen];
+      } else {
+        return progressionB.chords[bar % progBLen];
       }
     }
-  } else {
-    const playFn =
-      chordInstrument === "guitar" ? playGuitarChord :
-      chordInstrument === "strings" ? playStringsChord :
-      playSynthPadChord;
 
-    for (let bar = 0; bar < totalBars; bar++) {
-      const chord = progression.chords[bar % progression.chords.length];
-      const t = bar * barDuration;
-      playFn(offCtx, chord.notes, t, barDuration * 0.9, offCtx.destination, convolver, 0.18 * vol.chords);
+    if (chordInstrument === "piano") {
+      for (let bar = 0; bar < totalBars; bar++) {
+        const chord = chordForBar(bar);
+        const t = bar * barDuration;
+        for (const midi of chord.notes) {
+          playPianoNote(offCtx, pianoBuffers, bank, midi, t, barDuration * 0.9, offCtx.destination, convolver, 0.18 * vol.chords);
+        }
+      }
+    } else {
+      const playFn =
+        chordInstrument === "guitar" ? playGuitarChord :
+        chordInstrument === "strings" ? playStringsChord :
+        playSynthPadChord;
+
+      for (let bar = 0; bar < totalBars; bar++) {
+        const chord = chordForBar(bar);
+        const t = bar * barDuration;
+        playFn(offCtx, chord.notes, t, barDuration * 0.9, offCtx.destination, convolver, 0.18 * vol.chords);
+      }
     }
   }
 
@@ -470,10 +497,12 @@ export async function renderMix(
   }
 
   // --- Drums (sample-based) ---
-  const drumSchedule = buildDrumSchedule(drumStyle.pattern, bpm, totalBars, 0, beatsPerBar);
-  drumSchedule.kick.forEach((t) => playSample(offCtx, kickBuf, t, offCtx.destination, 0.6 * vol.drums));
-  drumSchedule.snare.forEach((t) => playSample(offCtx, snareBuf, t, offCtx.destination, 0.5 * vol.drums));
-  drumSchedule.hihat.forEach((t) => playSample(offCtx, hihatBuf, t, offCtx.destination, 0.35 * vol.drums));
+  if (drumStyle) {
+    const drumSchedule = buildDrumSchedule(drumStyle.pattern, bpm, totalBars, 0, beatsPerBar);
+    drumSchedule.kick.forEach((t) => playSample(offCtx, kickBuf, t, offCtx.destination, 0.6 * vol.drums));
+    drumSchedule.snare.forEach((t) => playSample(offCtx, snareBuf, t, offCtx.destination, 0.5 * vol.drums));
+    drumSchedule.hihat.forEach((t) => playSample(offCtx, hihatBuf, t, offCtx.destination, 0.35 * vol.drums));
+  }
 
   // --- Render ---
   const renderedBuffer = await offCtx.startRendering();

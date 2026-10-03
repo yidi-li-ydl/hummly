@@ -44,7 +44,7 @@ export interface DrumStyle {
   pattern: DrumHit[];
 }
 
-export type WizardStep = "record" | "processing" | "chords" | "drums" | "mix";
+export type WizardStep = "record" | "processing" | "review" | "chords" | "drums" | "mix";
 
 export type ChordInstrument = "piano" | "guitar" | "strings" | "synth-pad";
 
@@ -79,6 +79,7 @@ export interface HummlyState {
   detectedKey: KeyResult | null;
   chordOptions: ChordProgression[];
   selectedChords: ChordProgression | null;
+  selectedChordsB: ChordProgression | null;
   chordInstrument: ChordInstrument;
   melodyVoice: MelodyVoice;
   drumKit: DrumKit;
@@ -99,7 +100,7 @@ export type HummlyAction =
   | { type: "SET_NOTES"; notes: QuantizedNote[] }
   | { type: "SET_KEY"; key: KeyResult }
   | { type: "SET_CHORD_OPTIONS"; options: ChordProgression[] }
-  | { type: "SELECT_CHORDS"; progression: ChordProgression }
+  | { type: "SELECT_CHORDS"; progression: ChordProgression; progressionB: ChordProgression | null }
   | { type: "SET_CHORD_INSTRUMENT"; instrument: ChordInstrument }
   | { type: "SET_DRUM_OPTIONS"; options: DrumStyle[] }
   | { type: "SELECT_DRUMS"; style: DrumStyle }

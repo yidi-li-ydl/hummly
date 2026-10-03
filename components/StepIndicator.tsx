@@ -5,6 +5,7 @@ import type { WizardStep } from "@/lib/types";
 const STEPS: { key: WizardStep; label: string }[] = [
   { key: "record", label: "Record" },
   { key: "processing", label: "Analyze" },
+  { key: "review", label: "Review" },
   { key: "chords", label: "Chords" },
   { key: "drums", label: "Drums" },
   { key: "mix", label: "Mix" },

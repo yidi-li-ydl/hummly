@@ -15,12 +15,16 @@ const INSTRUMENTS: { id: ChordInstrument; label: string; icon: string }[] = [
 interface Props {
   options: ChordProgression[];
   detectedKey: KeyResult;
-  onSelect: (progression: ChordProgression, instrument: ChordInstrument) => void;
+  onSelect: (a: ChordProgression, b: ChordProgression | null, instrument: ChordInstrument) => void;
+  onSkip: () => void;
 }
 
-export default function ChordStep({ options, detectedKey, onSelect }: Props) {
+type Phase = "pick-a" | "pick-b";
+
+export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Props) {
+  const [phase, setPhase] = useState<Phase>("pick-a");
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selectedA, setSelectedA] = useState<number | null>(null);
   const [selectedInstrument, setSelectedInstrument] = useState<ChordInstrument>("piano");
   const [mode, setMode] = useState<"major" | "minor">(detectedKey.mode);
 
@@ -44,17 +48,36 @@ export default function ChordStep({ options, detectedKey, onSelect }: Props) {
     setPreviewIndex(null);
   };
 
-  const handleSelect = (index: number) => {
-    setSelected(index);
+  const handlePickA = (index: number) => {
+    setSelectedA(index);
     stopPreview();
-    onSelect(currentOptions[index], selectedInstrument);
+    setPhase("pick-b");
+  };
+
+  const handlePickB = (index: number) => {
+    if (selectedA === null) return;
+    stopPreview();
+    onSelect(currentOptions[selectedA], currentOptions[index], selectedInstrument);
+  };
+
+  const handleSkipB = () => {
+    if (selectedA === null) return;
+    stopPreview();
+    onSelect(currentOptions[selectedA], null, selectedInstrument);
   };
 
   const handleModeToggle = (newMode: "major" | "minor") => {
     if (newMode === mode) return;
     setMode(newMode);
-    setSelected(null);
+    setSelectedA(null);
+    setPhase("pick-a");
     setPreviewIndex(null);
+    stopPreview();
+  };
+
+  const handleBackToA = () => {
+    setPhase("pick-a");
+    setSelectedA(null);
     stopPreview();
   };
 
@@ -82,7 +105,24 @@ export default function ChordStep({ options, detectedKey, onSelect }: Props) {
             </button>
           ))}
         </div>
-        <p className="text-text-secondary text-xs mt-2">Choose a chord progression</p>
+        <p className="text-text-secondary text-xs mt-3">
+          {phase === "pick-a"
+            ? "Pick a chord progression (A section / verse)"
+            : "Now pick a B section (chorus) for variety, or skip"}
+        </p>
+        {phase === "pick-b" && selectedA !== null && (
+          <div className="mt-2 flex items-center justify-center gap-2">
+            <span className="text-xs text-neon-purple">
+              A: {currentOptions[selectedA].name}
+            </span>
+            <button
+              onClick={handleBackToA}
+              className="text-xs text-text-secondary hover:text-text-primary underline"
+            >
+              change
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="flex justify-center gap-2">
@@ -104,62 +144,84 @@ export default function ChordStep({ options, detectedKey, onSelect }: Props) {
         ))}
       </div>
 
-      <div className="grid gap-3">
-        {currentOptions.map((prog, i) => (
-          <div
-            key={i}
-            className={`relative p-4 rounded-xl border transition-all cursor-pointer ${
-              selected === i
-                ? "border-neon-purple bg-neon-purple/10"
-                : "border-surface-card bg-surface-card hover:border-neon-purple/50"
-            }`}
-            onClick={() => handleSelect(i)}
+      <div className="flex justify-center gap-2">
+        <button
+          onClick={() => { stopPreview(); onSkip(); }}
+          className="px-4 py-1.5 rounded-lg text-xs text-text-secondary hover:text-text-primary bg-surface-card hover:bg-surface-secondary transition-colors"
+        >
+          Skip — no chords
+        </button>
+        {phase === "pick-b" && (
+          <button
+            onClick={handleSkipB}
+            className="px-4 py-1.5 rounded-lg text-xs text-text-secondary hover:text-text-primary bg-surface-card hover:bg-surface-secondary transition-colors"
           >
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold text-sm">{prog.name}</h3>
-                <p className="text-text-secondary text-xs mt-0.5">{prog.description}</p>
-                <div className="flex gap-2 mt-2">
-                  {prog.chords.map((chord, j) => (
-                    <span
-                      key={j}
-                      className="px-2 py-0.5 rounded bg-surface-secondary text-xs text-neon-cyan font-mono"
-                    >
-                      {chord.name}
-                    </span>
-                  ))}
+            Skip B — use A only
+          </button>
+        )}
+      </div>
+
+      <div className="grid gap-3">
+        {currentOptions.map((prog, i) => {
+          const isSelectedA = phase === "pick-b" && selectedA === i;
+          return (
+            <div
+              key={i}
+              className={`relative p-4 rounded-xl border transition-all cursor-pointer ${
+                isSelectedA
+                  ? "border-neon-green bg-neon-green/10 opacity-60 cursor-default"
+                  : "border-surface-card bg-surface-card hover:border-neon-purple/50"
+              }`}
+              onClick={() => {
+                if (isSelectedA) return;
+                if (phase === "pick-a") handlePickA(i);
+                else handlePickB(i);
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-sm">{prog.name}</h3>
+                    {isSelectedA && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-neon-green/20 text-neon-green">
+                        A
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-text-secondary text-xs mt-0.5">{prog.description}</p>
+                  <div className="flex gap-2 mt-2">
+                    {prog.chords.map((chord, j) => (
+                      <span
+                        key={j}
+                        className="px-2 py-0.5 rounded bg-surface-secondary text-xs text-neon-cyan font-mono"
+                      >
+                        {chord.name}
+                      </span>
+                    ))}
+                  </div>
                 </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handlePreview(i);
+                  }}
+                  className="w-10 h-10 rounded-full bg-surface-secondary hover:bg-neon-purple/30 flex items-center justify-center flex-shrink-0 transition-colors"
+                >
+                  {previewIndex === i ? (
+                    <svg className="w-4 h-4 text-neon-purple" fill="currentColor" viewBox="0 0 24 24">
+                      <rect x="6" y="4" width="4" height="16" rx="1" />
+                      <rect x="14" y="4" width="4" height="16" rx="1" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4 text-text-primary" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  )}
+                </button>
               </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handlePreview(i);
-                }}
-                className="w-10 h-10 rounded-full bg-surface-secondary hover:bg-neon-purple/30 flex items-center justify-center flex-shrink-0 transition-colors"
-              >
-                {previewIndex === i ? (
-                  <svg className="w-4 h-4 text-neon-purple" fill="currentColor" viewBox="0 0 24 24">
-                    <rect x="6" y="4" width="4" height="16" rx="1" />
-                    <rect x="14" y="4" width="4" height="16" rx="1" />
-                  </svg>
-                ) : (
-                  <svg className="w-4 h-4 text-text-primary" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                )}
-              </button>
             </div>
-            {selected === i && (
-              <div className="absolute top-2 right-2">
-                <div className="w-5 h-5 rounded-full bg-neon-green flex items-center justify-center">
-                  <svg className="w-3 h-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

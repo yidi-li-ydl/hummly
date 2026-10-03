@@ -15,10 +15,12 @@ const DRUM_KITS: { id: DrumKit; label: string; description: string }[] = [
 interface Props {
   options: DrumStyle[];
   beatsPerBar: number;
+  bpm: number;
   onSelect: (style: DrumStyle, kit: DrumKit) => void;
+  onSkip: () => void;
 }
 
-export default function DrumStep({ options, beatsPerBar, onSelect }: Props) {
+export default function DrumStep({ options, beatsPerBar, bpm, onSelect, onSkip }: Props) {
   const filtered = options.filter((s) => s.beatsPerBar === beatsPerBar);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
@@ -31,7 +33,7 @@ export default function DrumStep({ options, beatsPerBar, onSelect }: Props) {
       return;
     }
     setPreviewIndex(index);
-    await previewDrums(filtered[index], selectedKit);
+    await previewDrums(filtered[index], selectedKit, bpm);
     setPreviewIndex(null);
   };
 
@@ -64,6 +66,15 @@ export default function DrumStep({ options, beatsPerBar, onSelect }: Props) {
         ))}
       </div>
 
+      <div className="flex justify-center">
+        <button
+          onClick={() => { stopPreview(); onSkip(); }}
+          className="px-4 py-1.5 rounded-lg text-xs text-text-secondary hover:text-text-primary bg-surface-card hover:bg-surface-secondary transition-colors"
+        >
+          Skip — no drums
+        </button>
+      </div>
+
       <div className="grid gap-3">
         {filtered.map((style, i) => (
           <div
@@ -80,7 +91,7 @@ export default function DrumStep({ options, beatsPerBar, onSelect }: Props) {
                 <h3 className="font-semibold text-sm">{style.name}</h3>
                 <p className="text-text-secondary text-xs mt-0.5">{style.description}</p>
                 <span className="inline-block mt-1.5 px-2 py-0.5 rounded bg-surface-secondary text-xs text-neon-pink font-mono">
-                  {style.bpm} BPM
+                  {bpm} BPM
                 </span>
               </div>
               <button

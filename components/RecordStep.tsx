@@ -8,17 +8,8 @@ import type { PitchReading, VoicePcm } from "@/lib/types";
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const TOTAL_BARS = 4;
-
-const BPM_PRESETS = [
-  { label: "Slow", bpm: 80 },
-  { label: "Medium", bpm: 100 },
-  { label: "Fast", bpm: 120 },
-];
-
-const TIME_SIG_OPTIONS: { label: string; value: number }[] = [
-  { label: "4/4", value: 4 },
-  { label: "3/4", value: 3 },
-];
+const DEFAULT_BPM = 100;
+const DEFAULT_BEATS_PER_BAR = 4;
 
 function freqToNoteName(freq: number): string {
   const midi = Math.round(12 * Math.log2(freq / 440) + 69);
@@ -41,18 +32,14 @@ function scheduleClick(ctx: AudioContext, time: number, isDownbeat: boolean) {
 }
 
 interface Props {
-  bpm: number;
-  beatsPerBar: number;
-  onBpmChange: (bpm: number) => void;
-  onBeatsPerBarChange: (beatsPerBar: number) => void;
   onComplete: (pcm: VoicePcm, readings: PitchReading[]) => void;
 }
 
-export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBarChange, onComplete }: Props) {
+export default function RecordStep({ onComplete }: Props) {
   const [phase, setPhase] = useState<"idle" | "countin" | "recording" | "uploading">("idle");
   const [countBeat, setCountBeat] = useState(0);
   const [currentBar, setCurrentBar] = useState(0);
-  const [currentBeat, setCurrentBeat] = useState(0); // 1-based beat within bar
+  const [currentBeat, setCurrentBeat] = useState(0);
   const [currentNote, setCurrentNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const recorderRef = useRef<RecorderHandle | null>(null);
@@ -64,6 +51,9 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
   const clickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countInTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const bpm = DEFAULT_BPM;
+  const beatsPerBar = DEFAULT_BEATS_PER_BAR;
 
   const cleanup = useCallback(() => {
     if (stopPitchRef.current) {
@@ -132,7 +122,6 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
       const recorder = await createRecorder();
       recorderRef.current = recorder;
 
-      // Separate AudioContext for the click track so it never bleeds into the recording
       const clickCtx = new AudioContext();
       clickCtxRef.current = clickCtx;
 
@@ -142,13 +131,11 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
 
       const beatMs = (60 / bpm) * 1000;
 
-      // Schedule beatsPerBar count-in clicks on the isolated click context
       const now = clickCtx.currentTime + 0.05;
       for (let i = 0; i < beatsPerBar; i++) {
         scheduleClick(clickCtx, now + i * (60 / bpm), i === 0);
       }
 
-      // Visual beat counter during count-in
       let beat = 1;
       setCountBeat(1);
       const countInterval = setInterval(() => {
@@ -158,13 +145,11 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
         }
       }, beatMs);
 
-      // After beatsPerBar beats, start actual recording
       countInTimerRef.current = setTimeout(() => {
         clearInterval(countInterval);
         setCountBeat(0);
         setPhase("recording");
 
-        // Start pitch tracking
         stopPitchRef.current = startPitchTracking(
           recorder.analyserNode,
           recorder.audioContext,
@@ -174,10 +159,8 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
           }
         );
 
-        // Start recording
         recorder.startRecording();
 
-        // Bar & beat counter
         const beatDuration = 60 / bpm;
         const barDuration = beatsPerBar * beatDuration;
         const maxDuration = barDuration * TOTAL_BARS;
@@ -191,7 +174,6 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
           setCurrentBeat(beatInBar);
         }, 50);
 
-        // Auto-stop after 4 bars
         autoStopTimerRef.current = setTimeout(() => {
           stopRecordingRef.current?.();
         }, maxDuration * 1000);
@@ -214,13 +196,11 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
     onComplete(pcm, readingsRef.current);
   }, [cleanup, onComplete]);
 
-  // Keep ref in sync for the auto-stop timer
   stopRecordingRef.current = stopRecording;
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // Reset so re-selecting the same file still triggers onChange
     e.target.value = "";
 
     try {
@@ -231,7 +211,6 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
       const audioCtx = new AudioContext();
       const decoded = await audioCtx.decodeAudioData(arrayBuffer);
 
-      // Mix down to mono
       let mono: Float32Array;
       if (decoded.numberOfChannels === 1) {
         mono = decoded.getChannelData(0);
@@ -268,49 +247,6 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
 
   return (
     <div className="flex flex-col items-center gap-6">
-      {/* Settings — only shown when idle */}
-      {phase === "idle" && (
-        <div className="flex flex-col items-center gap-4">
-          <div className="flex flex-col items-center gap-2">
-            <p className="text-text-secondary text-xs">Tempo</p>
-            <div className="flex gap-2">
-              {BPM_PRESETS.map((preset) => (
-                <button
-                  key={preset.bpm}
-                  onClick={() => onBpmChange(preset.bpm)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    bpm === preset.bpm
-                      ? "bg-neon-purple text-white"
-                      : "bg-surface-card hover:bg-surface-secondary text-text-secondary"
-                  }`}
-                >
-                  {preset.label}
-                  <span className="ml-1.5 text-xs opacity-70">{preset.bpm}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="flex flex-col items-center gap-2">
-            <p className="text-text-secondary text-xs">Time Signature</p>
-            <div className="flex gap-2">
-              {TIME_SIG_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => onBeatsPerBarChange(opt.value)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium font-mono transition-colors ${
-                    beatsPerBar === opt.value
-                      ? "bg-neon-purple text-white"
-                      : "bg-surface-card hover:bg-surface-secondary text-text-secondary"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
       {phase !== "idle" && (
         <WaveformVisualizer
           analyserNode={recorderRef.current?.analyserNode ?? null}
@@ -340,7 +276,6 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
       {/* Visual metronome + note display */}
       {phase === "recording" && (
         <div className="flex flex-col items-center gap-3">
-          {/* Beat dots */}
           <div className="flex items-center gap-2">
             {Array.from({ length: beatsPerBar }, (_, i) => {
               const beatNum = i + 1;
@@ -360,11 +295,9 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
               );
             })}
           </div>
-          {/* Bar counter */}
           <div className="text-text-secondary text-xs tabular-nums">
             Bar {currentBar} / {TOTAL_BARS}
           </div>
-          {/* Current note */}
           <div className="h-8 flex items-center justify-center">
             {currentNote ? (
               <span className="text-xl font-bold text-neon-cyan">{currentNote}</span>
@@ -440,7 +373,7 @@ export default function RecordStep({ bpm, beatsPerBar, onBpmChange, onBeatsPerBa
           ? "Hum your melody..."
           : phase === "countin"
           ? "Count-in — click to cancel"
-          : `Tap to record or upload an audio file (${bpm} BPM, ${beatsPerBar === 3 ? "3/4" : "4/4"}, ${TOTAL_BARS} bars)`}
+          : "Tap to record or upload an audio file"}
       </p>
 
       {error && <p className="text-red-400 text-sm">{error}</p>}

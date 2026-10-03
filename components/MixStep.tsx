@@ -7,8 +7,9 @@ import type { ChordInstrument, DrumKit, MelodyVoice, MixVolumes, QuantizedNote, 
 
 interface Props {
   notes: QuantizedNote[];
-  chords: ChordProgression;
-  drums: DrumStyle;
+  chords: ChordProgression | null;
+  chordsB: ChordProgression | null;
+  drums: DrumStyle | null;
   bpm: number;
   beatsPerBar: number;
   detectedKey: KeyResult;
@@ -21,7 +22,7 @@ interface Props {
   onStartOver: () => void;
 }
 
-export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, drumKit, onStartOver }: Props) {
+export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, drumKit, onStartOver }: Props) {
   const [status, setStatus] = useState<"rendering" | "ready" | "error">("rendering");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [vocalUrl, setVocalUrl] = useState<string | null>(null);
@@ -46,12 +47,12 @@ export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detect
 
         const [withVoice, withoutVoice] = await Promise.all([
           renderMix(
-            snappedNotes, chords, drums, undefined, bpm,
+            snappedNotes, chords ?? undefined, chordsB ?? undefined, drums ?? undefined, undefined, bpm,
             voicePcm ?? undefined, pitchReadings, detectedKey,
             chordInstrument, beatsPerBar, "real", volWith, voiceEq, notes, drumKit
           ),
           renderMix(
-            snappedNotes, chords, drums, undefined, bpm,
+            snappedNotes, chords ?? undefined, chordsB ?? undefined, drums ?? undefined, undefined, bpm,
             voicePcm ?? undefined, pitchReadings, detectedKey,
             chordInstrument, beatsPerBar, "real", volWithout, voiceEq, notes, drumKit
           ),
@@ -150,7 +151,7 @@ export default function MixStep({ notes, chords, drums, bpm, beatsPerBar, detect
       <div className="text-center mb-2">
         <h2 className="text-lg font-semibold gradient-text">Your Demo is Ready!</h2>
         <p className="text-text-secondary text-xs mt-1">
-          {chords.name} chords + {drums.name} drums @ {bpm} BPM
+          {[chords && `${chords.name} chords`, drums && `${drums.name} drums`].filter(Boolean).join(" + ") || "Voice only"} @ {bpm} BPM
         </p>
       </div>
 
