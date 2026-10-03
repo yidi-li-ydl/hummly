@@ -85,14 +85,136 @@ const MINOR_PROGRESSIONS: ProgressionTemplate[] = [
   { name: "Grunge", description: "i - iv - III - VI", degrees: [0, 3, 2, 5] },
 ];
 
-export function generateChordProgressions(keyResult: KeyResult): ChordProgression[] {
+function getRelativeKey(key: string, mode: "major" | "minor"): { key: string; mode: "major" | "minor" } {
+  const root = NOTE_NAMES.indexOf(key);
+  if (mode === "major") {
+    return { key: NOTE_NAMES[(root + 9) % 12], mode: "minor" };
+  } else {
+    return { key: NOTE_NAMES[(root + 3) % 12], mode: "major" };
+  }
+}
+
+export function generateChordProgressions(
+  keyResult: KeyResult,
+  includeRelative = true
+): ChordProgression[] {
   const rootIndex = NOTE_NAMES.indexOf(keyResult.key);
   const diatonicChords = buildDiatonicChords(rootIndex, keyResult.mode);
   const templates = keyResult.mode === "major" ? MAJOR_PROGRESSIONS : MINOR_PROGRESSIONS;
 
-  return templates.map((template) => ({
+  const primary = templates.map((template) => ({
     name: template.name,
     description: `${keyResult.key} ${keyResult.mode}: ${template.description}`,
     chords: template.degrees.map((deg) => diatonicChords[deg]),
   }));
+
+  if (!includeRelative) return primary;
+
+  const rel = getRelativeKey(keyResult.key, keyResult.mode);
+  const relRoot = NOTE_NAMES.indexOf(rel.key);
+  const relChords = buildDiatonicChords(relRoot, rel.mode);
+  const relTemplates = rel.mode === "major" ? MAJOR_PROGRESSIONS : MINOR_PROGRESSIONS;
+
+  const secondary = relTemplates.map((template) => ({
+    name: `${template.name} (${rel.key} ${rel.mode})`,
+    description: `${rel.key} ${rel.mode}: ${template.description} (relative ${rel.mode})`,
+    chords: template.degrees.map((deg) => relChords[deg]),
+  }));
+
+  return [...primary, ...secondary];
+}
+
+// --- B-section chord recommendation ---
+
+/** Pitch classes (0–11) present in a chord's MIDI notes. */
+function chordPitchClasses(chord: Chord): Set<number> {
+  return new Set(chord.notes.map((n) => n % 12));
+}
+
+/** Count how many pitch classes two chords share. */
+function commonTones(a: Chord, b: Chord): number {
+  const setA = chordPitchClasses(a);
+  let count = 0;
+  for (const pc of chordPitchClasses(b)) {
+    if (setA.has(pc)) count++;
+  }
+  return count;
+}
+
+/**
+ * How many chords (by name) are identical between two progressions,
+ * normalized to 0–1 where 1 = every chord position matches.
+ */
+function chordOverlap(a: ChordProgression, b: ChordProgression): number {
+  const len = Math.min(a.chords.length, b.chords.length);
+  if (len === 0) return 0;
+  let matches = 0;
+  for (let i = 0; i < len; i++) {
+    if (a.chords[i].name === b.chords[i].name) matches++;
+  }
+  return matches / Math.max(a.chords.length, b.chords.length);
+}
+
+/**
+ * Score how well B's last chord resolves back to A's first chord.
+ * Strong resolutions (V→I, iv→I, VII→i, etc.) get higher scores.
+ */
+function resolutionScore(lastOfB: Chord, firstOfA: Chord): number {
+  const from = lastOfB.notes[0] % 12; // root pitch class
+  const to = firstOfA.notes[0] % 12;
+  const interval = ((to - from) + 12) % 12; // semitones up from B-last to A-first
+
+  // Perfect cadence: V → I (interval 7 up from V root = 5 semitones down, i.e. interval 7)
+  if (interval === 7) return 3;
+  // Plagal cadence: IV → I (interval 5)
+  if (interval === 5) return 2.5;
+  // Subtonic resolution: VII → I (interval 1 — one semitone below, leading tone)
+  if (interval === 1) return 2.5;
+  // bVII → i (interval 2 — whole step, common in minor)
+  if (interval === 2) return 2;
+  // ii → I (interval 10, i.e. whole step down)
+  if (interval === 10) return 1.5;
+  // vi → I (interval 4) or III → i (interval 8)
+  if (interval === 4 || interval === 8) return 1;
+
+  return 0;
+}
+
+/**
+ * Rank B-section chord progression candidates by music-theory compatibility
+ * with the chosen A-section. Returns a new array sorted best-first, excluding
+ * the A progression itself.
+ */
+export function rankBProgressions(
+  aProgression: ChordProgression,
+  allOptions: ChordProgression[]
+): ChordProgression[] {
+  const candidates = allOptions.filter((p) => p.name !== aProgression.name);
+
+  const scored = candidates.map((b) => {
+    // 1. Voice-leading smoothness: common tones between A's last chord and B's first chord
+    const voiceLeading = commonTones(
+      aProgression.chords[aProgression.chords.length - 1],
+      b.chords[0]
+    );
+
+    // 2. Harmonic contrast: penalize high overlap (identical or near-identical sequences)
+    const overlap = chordOverlap(aProgression, b);
+    const contrast = 1 - overlap; // 0 = identical, 1 = completely different
+
+    // 3. Resolution quality: how well B's last chord leads back to A's first chord
+    const resolution = resolutionScore(
+      b.chords[b.chords.length - 1],
+      aProgression.chords[0]
+    );
+
+    // Weighted total (higher = better)
+    const score = voiceLeading * 1.0 + contrast * 2.0 + resolution * 1.5;
+
+    return { progression: b, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  return scored.map((s) => s.progression);
 }

@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { previewChords, stopPreview } from "@/lib/audio/mixer";
-import { generateChordProgressions } from "@/lib/audio/chordGenerator";
+import { rankBProgressions } from "@/lib/audio/chordGenerator";
 import type { ChordInstrument, ChordProgression, KeyResult } from "@/lib/types";
 
 const INSTRUMENTS: { id: ChordInstrument; label: string; icon: string }[] = [
@@ -26,49 +26,63 @@ export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Pr
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [selectedA, setSelectedA] = useState<number | null>(null);
   const [selectedInstrument, setSelectedInstrument] = useState<ChordInstrument>("piano");
-  const [mode, setMode] = useState<"major" | "minor">(detectedKey.mode);
+  const [filter, setFilter] = useState<"all" | "major" | "minor">("all");
 
-  const currentKey: KeyResult = useMemo(
-    () => ({ ...detectedKey, mode }),
-    [detectedKey, mode]
-  );
-  const currentOptions = useMemo(
-    () => (mode === detectedKey.mode ? options : generateChordProgressions(currentKey)),
-    [mode, detectedKey.mode, options, currentKey]
-  );
+  const filteredOptions = useMemo(() => {
+    if (filter === "all") return options;
+    return options.filter((p) => p.description.includes(` ${filter}:`));
+  }, [options, filter]);
 
-  const handlePreview = async (index: number) => {
-    if (previewIndex === index) {
+  // In pick-b phase, rank B candidates by music-theory compatibility with A
+  const displayOptions = useMemo(() => {
+    if (phase !== "pick-b" || selectedA === null) return filteredOptions;
+    return [
+      filteredOptions[selectedA], // keep A in place at index 0
+      ...rankBProgressions(filteredOptions[selectedA], filteredOptions),
+    ];
+  }, [phase, selectedA, filteredOptions]);
+
+  // Track which B candidates are "recommended" (top 2 in ranked list)
+  const recommendedNames = useMemo(() => {
+    if (phase !== "pick-b" || selectedA === null) return new Set<string>();
+    const ranked = rankBProgressions(filteredOptions[selectedA], filteredOptions);
+    return new Set(ranked.slice(0, 2).map((p) => p.name));
+  }, [phase, selectedA, options]);
+
+  const handlePreview = async (prog: ChordProgression) => {
+    const idx = filteredOptions.findIndex((p) => p.name === prog.name);
+    if (previewIndex === idx) {
       stopPreview();
       setPreviewIndex(null);
       return;
     }
-    setPreviewIndex(index);
-    await previewChords(currentOptions[index], selectedInstrument);
+    setPreviewIndex(idx);
+    await previewChords(prog, selectedInstrument);
     setPreviewIndex(null);
   };
 
-  const handlePickA = (index: number) => {
-    setSelectedA(index);
+  const handlePickA = (prog: ChordProgression) => {
+    const idx = filteredOptions.findIndex((p) => p.name === prog.name);
+    setSelectedA(idx);
     stopPreview();
     setPhase("pick-b");
   };
 
-  const handlePickB = (index: number) => {
+  const handlePickB = (prog: ChordProgression) => {
     if (selectedA === null) return;
     stopPreview();
-    onSelect(currentOptions[selectedA], currentOptions[index], selectedInstrument);
+    onSelect(filteredOptions[selectedA], prog, selectedInstrument);
   };
 
   const handleSkipB = () => {
     if (selectedA === null) return;
     stopPreview();
-    onSelect(currentOptions[selectedA], null, selectedInstrument);
+    onSelect(filteredOptions[selectedA], null, selectedInstrument);
   };
 
-  const handleModeToggle = (newMode: "major" | "minor") => {
-    if (newMode === mode) return;
-    setMode(newMode);
+  const handleFilterChange = (newFilter: "all" | "major" | "minor") => {
+    if (newFilter === filter) return;
+    setFilter(newFilter);
     setSelectedA(null);
     setPhase("pick-a");
     setPreviewIndex(null);
@@ -91,17 +105,17 @@ export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Pr
           </span>
         </p>
         <div className="flex justify-center gap-2 mt-2">
-          {(["major", "minor"] as const).map((m) => (
+          {(["all", "major", "minor"] as const).map((f) => (
             <button
-              key={m}
-              onClick={() => handleModeToggle(m)}
+              key={f}
+              onClick={() => handleFilterChange(f)}
               className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                mode === m
+                filter === f
                   ? "bg-neon-cyan/20 border border-neon-cyan text-neon-cyan"
                   : "bg-surface-card border border-surface-card hover:border-neon-cyan/40 text-text-secondary"
               }`}
             >
-              {m === "major" ? "Major" : "Minor"}
+              {f === "all" ? "Both" : f === "major" ? "Major" : "Minor"}
             </button>
           ))}
         </div>
@@ -113,7 +127,7 @@ export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Pr
         {phase === "pick-b" && selectedA !== null && (
           <div className="mt-2 flex items-center justify-center gap-2">
             <span className="text-xs text-neon-purple">
-              A: {currentOptions[selectedA].name}
+              A: {filteredOptions[selectedA].name}
             </span>
             <button
               onClick={handleBackToA}
@@ -162,11 +176,25 @@ export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Pr
       </div>
 
       <div className="grid gap-3">
-        {currentOptions.map((prog, i) => {
-          const isSelectedA = phase === "pick-b" && selectedA === i;
+        {displayOptions.map((prog, index) => {
+          const originalIdx = filteredOptions.findIndex((p) => p.name === prog.name);
+          const isSelectedA = phase === "pick-b" && selectedA === originalIdx;
+          const isRecommended = phase === "pick-b" && !isSelectedA && recommendedNames.has(prog.name);
+          const isFirstRelative =
+            phase === "pick-a" &&
+            index > 0 &&
+            prog.description.includes("(relative") &&
+            !displayOptions[index - 1].description.includes("(relative");
           return (
+            <div key={prog.name}>
+            {isFirstRelative && (
+              <div className="text-xs text-text-secondary mt-2 mb-3 flex items-center gap-2">
+                <div className="flex-1 h-px bg-white/10" />
+                <span>Relative {prog.description.includes("(relative minor)") ? "minor" : "major"}</span>
+                <div className="flex-1 h-px bg-white/10" />
+              </div>
+            )}
             <div
-              key={i}
               className={`relative p-4 rounded-xl border transition-all cursor-pointer ${
                 isSelectedA
                   ? "border-neon-green bg-neon-green/10 opacity-60 cursor-default"
@@ -174,8 +202,8 @@ export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Pr
               }`}
               onClick={() => {
                 if (isSelectedA) return;
-                if (phase === "pick-a") handlePickA(i);
-                else handlePickB(i);
+                if (phase === "pick-a") handlePickA(prog);
+                else handlePickB(prog);
               }}
             >
               <div className="flex items-center justify-between">
@@ -185,6 +213,11 @@ export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Pr
                     {isSelectedA && (
                       <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-neon-green/20 text-neon-green">
                         A
+                      </span>
+                    )}
+                    {isRecommended && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-neon-purple/20 text-neon-purple">
+                        Recommended
                       </span>
                     )}
                   </div>
@@ -203,11 +236,11 @@ export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Pr
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    handlePreview(i);
+                    handlePreview(prog);
                   }}
                   className="w-10 h-10 rounded-full bg-surface-secondary hover:bg-neon-purple/30 flex items-center justify-center flex-shrink-0 transition-colors"
                 >
-                  {previewIndex === i ? (
+                  {previewIndex === originalIdx ? (
                     <svg className="w-4 h-4 text-neon-purple" fill="currentColor" viewBox="0 0 24 24">
                       <rect x="6" y="4" width="4" height="16" rx="1" />
                       <rect x="14" y="4" width="4" height="16" rx="1" />
@@ -219,6 +252,7 @@ export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Pr
                   )}
                 </button>
               </div>
+            </div>
             </div>
           );
         })}
