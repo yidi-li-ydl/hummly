@@ -32,6 +32,8 @@ export default function ReviewStep({
   const voiceSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const clickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [currentBeat, setCurrentBeat] = useState(0);
+  const [bpmDraft, setBpmDraft] = useState(String(bpm));
+  const [bpmFocused, setBpmFocused] = useState(false);
 
   const stopPlayback = useCallback(() => {
     if (voiceSourceRef.current) {
@@ -167,9 +169,20 @@ export default function ReviewStep({
           >
             -
           </button>
-          <span className="text-3xl font-bold text-neon-purple tabular-nums w-24 text-center">
-            {bpm}
-          </span>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={bpmFocused ? bpmDraft : String(bpm)}
+            onFocus={(e) => { setBpmDraft(String(bpm)); setBpmFocused(true); e.target.select(); }}
+            onChange={(e) => setBpmDraft(e.target.value.replace(/[^0-9]/g, ""))}
+            onBlur={() => {
+              setBpmFocused(false);
+              const v = parseInt(bpmDraft, 10);
+              if (!isNaN(v)) onBpmChange(Math.max(40, Math.min(200, v)));
+            }}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            className="text-3xl font-bold text-neon-purple tabular-nums w-24 text-center bg-transparent border-b-2 border-neon-purple/30 focus:border-neon-purple outline-none transition-colors"
+          />
           <button
             onClick={() => onBpmChange(Math.min(200, bpm + 1))}
             className="w-10 h-10 rounded-full bg-surface-card hover:bg-surface-secondary flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors text-lg font-bold"
