@@ -1,6 +1,6 @@
 import * as Tone from "tone";
 import toWav from "audiobuffer-to-wav";
-import type { ChordInstrument, ChordProgression, DrumKit, DrumStyle, KeyResult, MelodyVoice, MixVolumes, PitchReading, QuantizedNote, VoiceEQ, VoicePcm } from "../types";
+import type { ChordInstrument, ChordProgression, DrumKit, DrumStyle, KeyResult, MelodyVoice, MixOffsets, MixVolumes, PitchReading, QuantizedNote, VoiceEQ, VoicePcm } from "../types";
 import { playGuitarChord, playStringsChord, playSynthPadChord } from "./chordSynths";
 
 
@@ -326,10 +326,12 @@ export async function renderMix(
   volumes?: MixVolumes,
   voiceEq?: VoiceEQ,
   originalNotes?: QuantizedNote[],
-  drumKit: DrumKit = "acoustic-kit"
+  drumKit: DrumKit = "acoustic-kit",
+  offsets?: MixOffsets
 ): Promise<{ buffer: AudioBuffer; url: string }> {
   const vol = volumes ?? { melody: 1, chords: 1, drums: 1 };
   const eq = voiceEq ?? { lowCut: 80, presence: 0 };
+  const mixOff = offsets ?? { voice: 0, chords: 0, drums: 0 };
   const bpm = bpmOverride ?? drumStyle?.bpm ?? 100;
   const barDuration = (beatsPerBar * 60) / bpm;
 
@@ -337,7 +339,10 @@ export async function renderMix(
   const voiceDuration = voicePcm
     ? voicePcm.channels[0].length / voicePcm.sampleRate
     : 0;
-  const totalBars = Math.max(4, Math.ceil(voiceDuration / barDuration));
+  const maxOffset = Math.max(mixOff.voice, mixOff.chords, mixOff.drums);
+  const baseBars = Math.max(4, Math.ceil(voiceDuration / barDuration));
+  const extraBars = Math.ceil(maxOffset / barDuration);
+  const totalBars = baseBars + extraBars;
   const renderDuration = barDuration * totalBars + 2;
 
   // Load instrument samples
@@ -419,22 +424,22 @@ export async function renderMix(
     // Auto-align: shift entire recording so first detected note lands on its
     // snapped grid position. No cutting — the whole audio moves as one piece.
     if (originalNotes && originalNotes.length > 0 && notes.length > 0) {
-      const offset = notes[0].startTime - originalNotes[0].startTime;
-      const startAt = Math.max(0, offset);
-      const trimFrom = Math.max(0, -offset);
-      voiceSource.start(startAt, trimFrom);
+      const autoOff = notes[0].startTime - originalNotes[0].startTime;
+      const combined = autoOff + mixOff.voice;
+      voiceSource.start(Math.max(0, combined), Math.max(0, -combined));
     } else {
-      voiceSource.start(0);
+      voiceSource.start(Math.max(0, mixOff.voice));
     }
   }
 
   // --- Piano melody (replaces voice) ---
   if (melodyVoice === "piano" && notes.length > 0) {
     for (const note of notes) {
-      if (note.startTime >= 0 && note.startTime < totalBars * barDuration) {
+      const t = note.startTime + mixOff.voice;
+      if (t >= 0 && t < totalBars * barDuration) {
         playPianoNote(
           offCtx, pianoBuffers, bank,
-          note.midiNote, note.startTime, Math.min(note.duration, 2),
+          note.midiNote, t, Math.min(note.duration, 2),
           offCtx.destination, convolver, 0.35 * vol.melody
         );
       }
@@ -464,7 +469,7 @@ export async function renderMix(
     if (chordInstrument === "piano") {
       for (let bar = 0; bar < totalBars; bar++) {
         const chord = chordForBar(bar);
-        const t = bar * barDuration;
+        const t = mixOff.chords + bar * barDuration;
         for (const midi of chord.notes) {
           playPianoNote(offCtx, pianoBuffers, bank, midi, t, barDuration * 0.9, offCtx.destination, convolver, 0.18 * vol.chords);
         }
@@ -477,7 +482,7 @@ export async function renderMix(
 
       for (let bar = 0; bar < totalBars; bar++) {
         const chord = chordForBar(bar);
-        const t = bar * barDuration;
+        const t = mixOff.chords + bar * barDuration;
         playFn(offCtx, chord.notes, t, barDuration * 0.9, offCtx.destination, convolver, 0.18 * vol.chords);
       }
     }
@@ -498,7 +503,7 @@ export async function renderMix(
 
   // --- Drums (sample-based) ---
   if (drumStyle) {
-    const drumSchedule = buildDrumSchedule(drumStyle.pattern, bpm, totalBars, 0, beatsPerBar);
+    const drumSchedule = buildDrumSchedule(drumStyle.pattern, bpm, totalBars, mixOff.drums, beatsPerBar);
     drumSchedule.kick.forEach((t) => playSample(offCtx, kickBuf, t, offCtx.destination, 0.6 * vol.drums));
     drumSchedule.snare.forEach((t) => playSample(offCtx, snareBuf, t, offCtx.destination, 0.5 * vol.drums));
     drumSchedule.hihat.forEach((t) => playSample(offCtx, hihatBuf, t, offCtx.destination, 0.35 * vol.drums));
