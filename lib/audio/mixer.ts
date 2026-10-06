@@ -1,6 +1,6 @@
 import * as Tone from "tone";
 import toWav from "audiobuffer-to-wav";
-import type { ChordInstrument, ChordProgression, DrumKit, DrumStyle, KeyResult, MelodyVoice, MixOffsets, MixVolumes, PitchReading, QuantizedNote, VoiceEQ, VoicePcm } from "../types";
+import type { ChordInstrument, ChordPattern, ChordProgression, DrumKit, DrumStyle, KeyResult, MelodyVoice, MixOffsets, MixVolumes, PitchReading, QuantizedNote, VoiceEQ, VoicePcm } from "../types";
 import { playGuitarChord, playStringsChord, playSynthPadChord } from "./chordSynths";
 
 
@@ -201,13 +201,22 @@ export async function previewMelody(notes: QuantizedNote[]): Promise<void> {
 
 export async function previewChords(
   progression: ChordProgression,
-  instrument: ChordInstrument = "piano"
+  instrument: ChordInstrument = "piano",
+  bpm = 100,
+  beatsPerBar = 4,
+  chordPattern?: ChordPattern
 ): Promise<void> {
   await ensureToneStarted();
   disposeActiveSynths();
 
   const ctx = Tone.getContext().rawContext as AudioContext;
   const now = ctx.currentTime + 0.1;
+  const beatDuration = 60 / bpm;
+  const barDuration = beatsPerBar * beatDuration;
+
+  const patternHits = chordPattern?.hits ?? [
+    { beat: 0, tones: [0, 1, 2], velocity: 1, sustain: beatsPerBar * 0.9 },
+  ];
 
   if (instrument === "piano") {
     const bank = await loadSampleBank();
@@ -215,25 +224,33 @@ export async function previewChords(
     for (const s of bank.piano) pianoBuffers.set(s.midiNote, makeBuf(ctx, s));
 
     progression.chords.forEach((chord, i) => {
-      const t = now + i * 1;
-      for (const midi of chord.notes) {
-        const { sample, rate } = findNearestPianoSample(bank, midi);
-        const buf = pianoBuffers.get(sample.midiNote)!;
+      const barStart = now + i * barDuration;
+      for (const hit of patternHits) {
+        const t = barStart + hit.beat * beatDuration;
+        const dur = hit.sustain * beatDuration;
+        const hitNotes = hit.tones.map((idx) =>
+          idx < chord.notes.length ? chord.notes[idx] : chord.notes[idx % chord.notes.length] + 12
+        );
+        for (const midi of hitNotes) {
+          const { sample, rate } = findNearestPianoSample(bank, midi);
+          const buf = pianoBuffers.get(sample.midiNote)!;
 
-        const source = ctx.createBufferSource();
-        source.buffer = buf;
-        source.playbackRate.value = rate;
+          const source = ctx.createBufferSource();
+          source.buffer = buf;
+          source.playbackRate.value = rate;
 
-        const gain = ctx.createGain();
-        gain.gain.setValueAtTime(0.3, t);
-        gain.gain.setValueAtTime(0.3, t + 0.7);
-        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.95);
+          const gain = ctx.createGain();
+          const vol = 0.3 * hit.velocity;
+          gain.gain.setValueAtTime(vol, t);
+          gain.gain.setValueAtTime(vol, t + dur * 0.7);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
 
-        source.connect(gain);
-        gain.connect(ctx.destination);
-        source.start(t);
-        source.stop(t + 2);
-        activeSourceNodes.push(source);
+          source.connect(gain);
+          gain.connect(ctx.destination);
+          source.start(t);
+          source.stop(t + dur + 1);
+          activeSourceNodes.push(source);
+        }
       }
     });
   } else {
@@ -243,12 +260,20 @@ export async function previewChords(
       playSynthPadChord;
 
     progression.chords.forEach((chord, i) => {
-      const t = now + i * 1;
-      playFn(ctx, chord.notes, t, 0.9, ctx.destination, ctx.destination, 0.3);
+      const barStart = now + i * barDuration;
+      for (const hit of patternHits) {
+        const t = barStart + hit.beat * beatDuration;
+        const dur = hit.sustain * beatDuration;
+        const hitNotes = hit.tones.map((idx) =>
+          idx < chord.notes.length ? chord.notes[idx] : chord.notes[idx % chord.notes.length] + 12
+        );
+        playFn(ctx, hitNotes, t, dur, ctx.destination, ctx.destination, 0.3 * hit.velocity);
+      }
     });
   }
 
-  const timer = setTimeout(() => disposeActiveSynths(), progression.chords.length * 1000 + 1500);
+  const totalMs = progression.chords.length * barDuration * 1000 + 1500;
+  const timer = setTimeout(() => disposeActiveSynths(), totalMs);
   cleanupTimers.push(timer);
 }
 
@@ -327,7 +352,8 @@ export async function renderMix(
   voiceEq?: VoiceEQ,
   originalNotes?: QuantizedNote[],
   drumKit: DrumKit = "acoustic-kit",
-  offsets?: MixOffsets
+  offsets?: MixOffsets,
+  chordPattern?: ChordPattern
 ): Promise<{ buffer: AudioBuffer; url: string }> {
   const vol = volumes ?? { melody: 1, chords: 1, drums: 1 };
   const eq = voiceEq ?? { lowCut: 80, presence: 0 };
@@ -450,14 +476,13 @@ export async function renderMix(
   if (progression) {
     const progALen = progression.chords.length;
     const progBLen = progressionB ? progressionB.chords.length : progALen;
-    // Section length = length of the A progression (typically 4 bars)
     const sectionLen = progALen;
+    const beatDuration = 60 / bpm;
 
     function chordForBar(bar: number) {
       if (!progressionB) {
         return progression!.chords[bar % progALen];
       }
-      // Alternate A/B every sectionLen bars
       const section = Math.floor(bar / sectionLen) % 2;
       if (section === 0) {
         return progression!.chords[bar % progALen];
@@ -466,24 +491,34 @@ export async function renderMix(
       }
     }
 
-    if (chordInstrument === "piano") {
-      for (let bar = 0; bar < totalBars; bar++) {
-        const chord = chordForBar(bar);
-        const t = mixOff.chords + bar * barDuration;
-        for (const midi of chord.notes) {
-          playPianoNote(offCtx, pianoBuffers, bank, midi, t, barDuration * 0.9, offCtx.destination, convolver, 0.18 * vol.chords);
-        }
-      }
-    } else {
-      const playFn =
-        chordInstrument === "guitar" ? playGuitarChord :
-        chordInstrument === "strings" ? playStringsChord :
-        playSynthPadChord;
+    const patternHits = chordPattern?.hits ?? [
+      { beat: 0, tones: [0, 1, 2], velocity: 1, sustain: beatsPerBar * 0.9 },
+    ];
 
-      for (let bar = 0; bar < totalBars; bar++) {
-        const chord = chordForBar(bar);
-        const t = mixOff.chords + bar * barDuration;
-        playFn(offCtx, chord.notes, t, barDuration * 0.9, offCtx.destination, convolver, 0.18 * vol.chords);
+    const playFn =
+      chordInstrument === "guitar" ? playGuitarChord :
+      chordInstrument === "strings" ? playStringsChord :
+      playSynthPadChord;
+
+    for (let bar = 0; bar < totalBars; bar++) {
+      const chord = chordForBar(bar);
+      const barStart = mixOff.chords + bar * barDuration;
+
+      for (const hit of patternHits) {
+        const t = barStart + hit.beat * beatDuration;
+        const dur = hit.sustain * beatDuration;
+        const hitVol = 0.18 * vol.chords * hit.velocity;
+        const hitNotes = hit.tones.map((i) =>
+          i < chord.notes.length ? chord.notes[i] : chord.notes[i % chord.notes.length] + 12
+        );
+
+        if (chordInstrument === "piano") {
+          for (const midi of hitNotes) {
+            playPianoNote(offCtx, pianoBuffers, bank, midi, t, dur, offCtx.destination, convolver, hitVol);
+          }
+        } else {
+          playFn(offCtx, hitNotes, t, dur, offCtx.destination, convolver, hitVol);
+        }
       }
     }
   }

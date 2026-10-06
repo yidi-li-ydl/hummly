@@ -16,6 +16,7 @@ import type {
   QuantizedNote,
   KeyResult,
   ChordInstrument,
+  ChordPattern,
   ChordProgression,
   DrumKit,
   DrumStyle,
@@ -26,6 +27,7 @@ const initialState: HummlyState = {
   step: "record",
   bpm: 100,
   beatsPerBar: 4,
+  beatOffset: 0,
   voicePcm: null,
   pitchReadings: [],
   notes: [],
@@ -33,6 +35,7 @@ const initialState: HummlyState = {
   chordOptions: [],
   selectedChords: null,
   selectedChordsB: null,
+  chordPattern: null,
   chordInstrument: "piano",
   melodyVoice: "real",
   drumKit: "acoustic-kit",
@@ -65,6 +68,8 @@ function reducer(state: HummlyState, action: HummlyAction): HummlyState {
       return { ...state, chordOptions: action.options };
     case "SELECT_CHORDS":
       return { ...state, selectedChords: action.progression, selectedChordsB: action.progressionB };
+    case "SET_CHORD_PATTERN":
+      return { ...state, chordPattern: action.pattern };
     case "SET_CHORD_INSTRUMENT":
       return { ...state, chordInstrument: action.instrument };
     case "SET_DRUM_OPTIONS":
@@ -75,6 +80,8 @@ function reducer(state: HummlyState, action: HummlyAction): HummlyState {
       return { ...state, drumKit: action.kit };
     case "SET_MELODY_VOICE":
       return { ...state, melodyVoice: action.voice };
+    case "SET_BEAT_OFFSET":
+      return { ...state, beatOffset: action.offset };
     case "SET_MIX":
       return { ...state, mixBuffer: action.buffer, mixUrl: action.url };
     case "SET_ERROR":
@@ -104,12 +111,13 @@ export default function StepWizard() {
   }, []);
 
   const handleProcessingComplete = useCallback(
-    (notes: QuantizedNote[], key: KeyResult, chordOptions: ChordProgression[], drumOptions: DrumStyle[], detectedBpm: number) => {
+    (notes: QuantizedNote[], key: KeyResult, chordOptions: ChordProgression[], drumOptions: DrumStyle[], detectedBpm: number, beatOffset: number) => {
       dispatch({ type: "SET_NOTES", notes });
       dispatch({ type: "SET_KEY", key });
       dispatch({ type: "SET_CHORD_OPTIONS", options: chordOptions });
       dispatch({ type: "SET_DRUM_OPTIONS", options: drumOptions });
       dispatch({ type: "SET_BPM", bpm: detectedBpm });
+      dispatch({ type: "SET_BEAT_OFFSET", offset: beatOffset });
       dispatch({ type: "SET_STEP", step: "review" });
     },
     []
@@ -119,13 +127,18 @@ export default function StepWizard() {
     dispatch({ type: "SET_ERROR", error });
   }, []);
 
+  const handleBeatOffsetChange = useCallback((offset: number) => {
+    dispatch({ type: "SET_BEAT_OFFSET", offset });
+  }, []);
+
   const handleReviewContinue = useCallback(() => {
     dispatch({ type: "SET_STEP", step: "chords" });
   }, []);
 
-  const handleChordSelect = useCallback((a: ChordProgression, b: ChordProgression | null, instrument: ChordInstrument) => {
+  const handleChordSelect = useCallback((a: ChordProgression, b: ChordProgression | null, instrument: ChordInstrument, pattern: ChordPattern) => {
     dispatch({ type: "SELECT_CHORDS", progression: a, progressionB: b });
     dispatch({ type: "SET_CHORD_INSTRUMENT", instrument });
+    dispatch({ type: "SET_CHORD_PATTERN", pattern });
     dispatch({ type: "SET_STEP", step: "drums" });
   }, []);
 
@@ -178,9 +191,11 @@ export default function StepWizard() {
           detectedKey={state.detectedKey}
           bpm={state.bpm}
           beatsPerBar={state.beatsPerBar}
+          beatOffset={state.beatOffset}
           voicePcm={state.voicePcm}
           onBpmChange={handleBpmChange}
           onBeatsPerBarChange={handleBeatsPerBarChange}
+          onBeatOffsetChange={handleBeatOffsetChange}
           onContinue={handleReviewContinue}
         />
       )}
@@ -189,6 +204,8 @@ export default function StepWizard() {
         <ChordStep
           options={state.chordOptions}
           detectedKey={state.detectedKey}
+          bpm={state.bpm}
+          beatsPerBar={state.beatsPerBar}
           onSelect={handleChordSelect}
           onSkip={handleChordSkip}
         />
@@ -208,6 +225,7 @@ export default function StepWizard() {
           voicePcm={state.voicePcm}
           pitchReadings={state.pitchReadings}
           chordInstrument={state.chordInstrument}
+          chordPattern={state.chordPattern}
           melodyVoice={state.melodyVoice}
           drumKit={state.drumKit}
           onMelodyVoiceChange={handleMelodyVoiceChange}

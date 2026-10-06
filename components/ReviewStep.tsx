@@ -7,9 +7,11 @@ interface Props {
   detectedKey: KeyResult;
   bpm: number;
   beatsPerBar: number;
+  beatOffset: number;
   voicePcm: VoicePcm | null;
   onBpmChange: (bpm: number) => void;
   onBeatsPerBarChange: (beatsPerBar: number) => void;
+  onBeatOffsetChange: (offset: number) => void;
   onContinue: () => void;
 }
 
@@ -22,9 +24,11 @@ export default function ReviewStep({
   detectedKey,
   bpm,
   beatsPerBar,
+  beatOffset,
   voicePcm,
   onBpmChange,
   onBeatsPerBarChange,
+  onBeatOffsetChange,
   onContinue,
 }: Props) {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -52,11 +56,11 @@ export default function ReviewStep({
     setCurrentBeat(0);
   }, []);
 
-  // Stop playback when BPM or beatsPerBar changes
+  // Stop playback when BPM, beatsPerBar, or beatOffset changes
   useEffect(() => {
     if (isPlaying) stopPlayback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bpm, beatsPerBar]);
+  }, [bpm, beatsPerBar, beatOffset]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -87,15 +91,15 @@ export default function ReviewStep({
     source.onended = () => stopPlayback();
     voiceSourceRef.current = source;
 
-    // Schedule click track
+    // Schedule click track — offset by beatOffset so clicks align with the melody
     const beatInterval = 60 / bpm;
     let beatCount = 0;
     const startTime = ctx.currentTime;
 
     function scheduleClicks() {
       const now = ctx.currentTime;
-      while (startTime + beatCount * beatInterval < now + 0.3) {
-        const t = startTime + beatCount * beatInterval;
+      while (startTime + beatOffset + beatCount * beatInterval < now + 0.3) {
+        const t = startTime + beatOffset + beatCount * beatInterval;
         if (t >= now - 0.01) {
           const isDownbeat = beatCount % beatsPerBar === 0;
 
@@ -129,7 +133,8 @@ export default function ReviewStep({
     clickTimerRef.current = setInterval(() => {
       scheduleClicks();
       if (!audioCtxRef.current) return;
-      const elapsed = audioCtxRef.current.currentTime - startTime;
+      const elapsed = audioCtxRef.current.currentTime - startTime - beatOffset;
+      if (elapsed < 0) { setCurrentBeat(0); return; }
       const beat = (Math.floor(elapsed / beatInterval) % beatsPerBar) + 1;
       setCurrentBeat(beat);
     }, 100);
@@ -137,7 +142,7 @@ export default function ReviewStep({
     clearInterval(visualTimer);
 
     setIsPlaying(true);
-  }, [voicePcm, bpm, beatsPerBar, stopPlayback]);
+  }, [voicePcm, bpm, beatsPerBar, beatOffset, stopPlayback]);
 
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
@@ -244,6 +249,41 @@ export default function ReviewStep({
           </p>
         </div>
       )}
+
+      {/* Beat Offset — shift when the first click lands */}
+      <div className="flex flex-col items-center gap-2">
+        <p className="text-text-secondary text-xs uppercase tracking-wider">Beat Alignment</p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              const step = 0.01;
+              const beatPeriod = 60 / bpm;
+              const next = ((beatOffset - step) % beatPeriod + beatPeriod) % beatPeriod;
+              onBeatOffsetChange(next);
+            }}
+            className="w-8 h-8 rounded-full bg-surface-card hover:bg-surface-secondary flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors text-sm font-bold"
+          >
+            -
+          </button>
+          <span className="text-sm font-mono text-neon-cyan tabular-nums w-16 text-center">
+            {Math.round(beatOffset * 1000)}ms
+          </span>
+          <button
+            onClick={() => {
+              const step = 0.01;
+              const beatPeriod = 60 / bpm;
+              const next = (beatOffset + step) % beatPeriod;
+              onBeatOffsetChange(next);
+            }}
+            className="w-8 h-8 rounded-full bg-surface-card hover:bg-surface-secondary flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors text-sm font-bold"
+          >
+            +
+          </button>
+        </div>
+        <p className="text-text-secondary text-xs text-center max-w-xs">
+          Shift when the clicks start — adjust if they don&apos;t land on your beats
+        </p>
+      </div>
 
       {/* Time Signature */}
       <div className="flex flex-col items-center gap-2">

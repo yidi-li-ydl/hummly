@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { quantizeNotes } from "@/lib/audio/noteQuantizer";
 import { detectKey } from "@/lib/audio/keyDetector";
 import { generateChordProgressions } from "@/lib/audio/chordGenerator";
-import { detectBpmFromNotes } from "@/lib/audio/bpmDetector";
+import { detectBpmFromNotes, detectBeatOffset } from "@/lib/audio/bpmDetector";
 import { DRUM_STYLES } from "@/lib/audio/drumPatterns";
 import type { PitchReading, QuantizedNote, KeyResult, ChordProgression, DrumStyle } from "@/lib/types";
 
@@ -15,7 +15,8 @@ interface Props {
     key: KeyResult,
     chordOptions: ChordProgression[],
     drumOptions: DrumStyle[],
-    detectedBpm: number
+    detectedBpm: number,
+    beatOffset: number
   ) => void;
   onError: (error: string) => void;
 }
@@ -24,6 +25,7 @@ const STAGES = [
   "Extracting notes from pitch data...",
   "Detecting musical key...",
   "Detecting tempo...",
+  "Detecting beat alignment...",
   "Generating chord progressions...",
   "Preparing drum patterns...",
 ];
@@ -58,17 +60,22 @@ export default function ProcessingStep({ readings, onComplete, onError }: Props)
         await delay(400);
         const detectedBpm = detectBpmFromNotes(notes);
 
-        // Stage 3: Generate chords
+        // Stage 3: Detect beat offset
         setStage(3);
+        await delay(400);
+        const beatOffset = detectBeatOffset(notes, detectedBpm);
+
+        // Stage 4: Generate chords
+        setStage(4);
         await delay(400);
         const chordOptions = generateChordProgressions(key);
 
-        // Stage 4: Prepare drums
-        setStage(4);
+        // Stage 5: Prepare drums
+        setStage(5);
         await delay(400);
         const drumOptions = DRUM_STYLES;
 
-        onComplete(notes, key, chordOptions, drumOptions, detectedBpm);
+        onComplete(notes, key, chordOptions, drumOptions, detectedBpm, beatOffset);
       } catch {
         onError("Analysis failed. Please try recording again.");
       }

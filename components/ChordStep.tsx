@@ -3,7 +3,8 @@
 import { useState, useMemo } from "react";
 import { previewChords, stopPreview } from "@/lib/audio/mixer";
 import { rankBProgressions } from "@/lib/audio/chordGenerator";
-import type { ChordInstrument, ChordProgression, KeyResult } from "@/lib/types";
+import { CHORD_PATTERNS } from "@/lib/audio/chordPatterns";
+import type { ChordInstrument, ChordPattern, ChordProgression, KeyResult } from "@/lib/types";
 
 const INSTRUMENTS: { id: ChordInstrument; label: string; icon: string }[] = [
   { id: "piano", label: "Piano", icon: "M3 5h18v14H3V5zm2 2v4h2V7H5zm4 0v4h2V7H9zm4 0v4h2V7h-2zm4 0v4h2V7h-2zM5 13v4h3v-4H5zm5 0v4h4v-4h-4zm6 0v4h3v-4h-3z" },
@@ -15,18 +16,28 @@ const INSTRUMENTS: { id: ChordInstrument; label: string; icon: string }[] = [
 interface Props {
   options: ChordProgression[];
   detectedKey: KeyResult;
-  onSelect: (a: ChordProgression, b: ChordProgression | null, instrument: ChordInstrument) => void;
+  bpm: number;
+  beatsPerBar: number;
+  onSelect: (a: ChordProgression, b: ChordProgression | null, instrument: ChordInstrument, pattern: ChordPattern) => void;
   onSkip: () => void;
 }
 
 type Phase = "pick-a" | "pick-b";
 
-export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Props) {
+export default function ChordStep({ options, detectedKey, bpm, beatsPerBar, onSelect, onSkip }: Props) {
   const [phase, setPhase] = useState<Phase>("pick-a");
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [selectedA, setSelectedA] = useState<number | null>(null);
   const [selectedInstrument, setSelectedInstrument] = useState<ChordInstrument>("piano");
   const [filter, setFilter] = useState<"all" | "major" | "minor">("all");
+
+  const availablePatterns = useMemo(
+    () => CHORD_PATTERNS.filter((p) => p.beatsPerBar === beatsPerBar),
+    [beatsPerBar]
+  );
+  const [selectedPattern, setSelectedPattern] = useState<ChordPattern>(
+    () => CHORD_PATTERNS.find((p) => p.beatsPerBar === beatsPerBar) ?? CHORD_PATTERNS[0]
+  );
 
   const filteredOptions = useMemo(() => {
     if (filter === "all") return options;
@@ -57,7 +68,7 @@ export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Pr
       return;
     }
     setPreviewIndex(idx);
-    await previewChords(prog, selectedInstrument);
+    await previewChords(prog, selectedInstrument, bpm, beatsPerBar, selectedPattern);
     setPreviewIndex(null);
   };
 
@@ -71,13 +82,13 @@ export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Pr
   const handlePickB = (prog: ChordProgression) => {
     if (selectedA === null) return;
     stopPreview();
-    onSelect(filteredOptions[selectedA], prog, selectedInstrument);
+    onSelect(filteredOptions[selectedA], prog, selectedInstrument, selectedPattern);
   };
 
   const handleSkipB = () => {
     if (selectedA === null) return;
     stopPreview();
-    onSelect(filteredOptions[selectedA], null, selectedInstrument);
+    onSelect(filteredOptions[selectedA], null, selectedInstrument, selectedPattern);
   };
 
   const handleFilterChange = (newFilter: "all" | "major" | "minor") => {
@@ -154,6 +165,23 @@ export default function ChordStep({ options, detectedKey, onSelect, onSkip }: Pr
               <path d={inst.icon} />
             </svg>
             {inst.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex justify-center gap-2 flex-wrap">
+        {availablePatterns.map((pat) => (
+          <button
+            key={pat.name}
+            onClick={() => setSelectedPattern(pat)}
+            title={pat.description}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              selectedPattern.name === pat.name
+                ? "bg-neon-cyan/20 border border-neon-cyan text-neon-cyan"
+                : "bg-surface-card border border-surface-card hover:border-neon-cyan/40 text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            {pat.name}
           </button>
         ))}
       </div>

@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { renderMix, downloadWav } from "@/lib/audio/mixer";
 import { snapToGrid } from "@/lib/audio/noteQuantizer";
 import Timeline from "./Timeline";
-import type { ChordInstrument, DrumKit, MelodyVoice, MixOffsets, MixVolumes, QuantizedNote, ChordProgression, DrumStyle, KeyResult, PitchReading, VoiceEQ, VoicePcm } from "@/lib/types";
+import type { ChordInstrument, ChordPattern, DrumKit, MelodyVoice, MixOffsets, MixVolumes, QuantizedNote, ChordProgression, DrumStyle, KeyResult, PitchReading, VoiceEQ, VoicePcm } from "@/lib/types";
 
 interface Props {
   notes: QuantizedNote[];
@@ -17,6 +17,7 @@ interface Props {
   voicePcm: VoicePcm | null;
   pitchReadings: PitchReading[];
   chordInstrument: ChordInstrument;
+  chordPattern: ChordPattern | null;
   melodyVoice: MelodyVoice;
   drumKit: DrumKit;
   onMelodyVoiceChange: (voice: MelodyVoice) => void;
@@ -25,7 +26,7 @@ interface Props {
 
 const ZERO_OFFSETS: MixOffsets = { voice: 0, chords: 0, drums: 0 };
 
-export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, drumKit, onStartOver }: Props) {
+export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, chordPattern, drumKit, onStartOver }: Props) {
   const [status, setStatus] = useState<"rendering" | "ready" | "error">("rendering");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [vocalUrl, setVocalUrl] = useState<string | null>(null);
@@ -61,19 +62,19 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
         snappedNotes, chords ?? undefined, chordsB ?? undefined, drums ?? undefined, undefined, bpm,
         voicePcm ?? undefined, pitchReadings, detectedKey,
         chordInstrument, beatsPerBar, "real", volWith, voiceEq, notes, drumKit,
-        mixOffsets
+        mixOffsets, chordPattern ?? undefined
       ),
       renderMix(
         snappedNotes, chords ?? undefined, chordsB ?? undefined, drums ?? undefined, undefined, bpm,
         voicePcm ?? undefined, pitchReadings, detectedKey,
         chordInstrument, beatsPerBar, "real", volWithout, voiceEq, notes, drumKit,
-        mixOffsets
+        mixOffsets, chordPattern ?? undefined
       ),
     ]);
 
     return { withVoice, withoutVoice };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snappedNotes, chords, chordsB, drums, bpm, voicePcm, pitchReadings, detectedKey, chordInstrument, beatsPerBar, notes, drumKit]);
+  }, [snappedNotes, chords, chordsB, drums, bpm, voicePcm, pitchReadings, detectedKey, chordInstrument, chordPattern, beatsPerBar, notes, drumKit]);
 
   // Initial render
   useEffect(() => {

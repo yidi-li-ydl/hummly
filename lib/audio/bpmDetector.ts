@@ -57,3 +57,38 @@ export function detectBpmFromNotes(notes: QuantizedNote[]): number {
 
   return bestBpm;
 }
+
+/**
+ * Detect the optimal beat offset — the time in seconds from the start of the
+ * recording to the first beat. Tries candidate offsets in [0, beatPeriod) at
+ * 10ms resolution and picks the one that best aligns note onsets to the beat
+ * grid (using the same Gaussian scoring as BPM detection).
+ */
+export function detectBeatOffset(notes: QuantizedNote[], bpm: number): number {
+  if (notes.length < 2) return 0;
+
+  const beatPeriod = 60 / bpm;
+  const step = 0.01;
+  const candidates = Math.floor(beatPeriod / step);
+
+  let bestOffset = 0;
+  let bestScore = -Infinity;
+
+  for (let c = 0; c < candidates; c++) {
+    const offset = c * step;
+    let score = 0;
+
+    for (const note of notes) {
+      const rel = (note.startTime - offset) / beatPeriod;
+      const error = Math.abs(rel - Math.round(rel));
+      score += Math.exp(-error * error * 20);
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestOffset = offset;
+    }
+  }
+
+  return bestOffset;
+}

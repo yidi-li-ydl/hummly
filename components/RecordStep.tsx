@@ -7,9 +7,7 @@ import { startPitchTracking, detectPitchOffline } from "@/lib/audio/pitchDetecto
 import type { PitchReading, VoicePcm } from "@/lib/types";
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-const TOTAL_BARS = 4;
-const DEFAULT_BPM = 100;
-const DEFAULT_BEATS_PER_BAR = 4;
+const MAX_RECORDING_SECONDS = 30;
 
 function freqToNoteName(freq: number): string {
   const midi = Math.round(12 * Math.log2(freq / 440) + 69);
@@ -18,17 +16,10 @@ function freqToNoteName(freq: number): string {
   return `${NOTE_NAMES[pitchClass]}${octave}`;
 }
 
-/** Schedule a short click sound on the given AudioContext */
-function scheduleClick(ctx: AudioContext, time: number, isDownbeat: boolean) {
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.frequency.value = isDownbeat ? 1000 : 800;
-  gain.gain.setValueAtTime(isDownbeat ? 0.5 : 0.3, time);
-  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.start(time);
-  osc.stop(time + 0.06);
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 interface Props {
@@ -36,24 +27,16 @@ interface Props {
 }
 
 export default function RecordStep({ onComplete }: Props) {
-  const [phase, setPhase] = useState<"idle" | "countin" | "recording" | "uploading">("idle");
-  const [countBeat, setCountBeat] = useState(0);
-  const [currentBar, setCurrentBar] = useState(0);
-  const [currentBeat, setCurrentBeat] = useState(0);
+  const [phase, setPhase] = useState<"idle" | "recording" | "uploading">("idle");
+  const [elapsed, setElapsed] = useState(0);
   const [currentNote, setCurrentNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const recorderRef = useRef<RecorderHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const clickCtxRef = useRef<AudioContext | null>(null);
   const readingsRef = useRef<PitchReading[]>([]);
   const stopPitchRef = useRef<(() => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const clickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const countInTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const bpm = DEFAULT_BPM;
-  const beatsPerBar = DEFAULT_BEATS_PER_BAR;
 
   const cleanup = useCallback(() => {
     if (stopPitchRef.current) {
@@ -64,21 +47,9 @@ export default function RecordStep({ onComplete }: Props) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    if (clickTimerRef.current) {
-      clearInterval(clickTimerRef.current);
-      clickTimerRef.current = null;
-    }
-    if (countInTimerRef.current) {
-      clearTimeout(countInTimerRef.current);
-      countInTimerRef.current = null;
-    }
     if (autoStopTimerRef.current) {
       clearTimeout(autoStopTimerRef.current);
       autoStopTimerRef.current = null;
-    }
-    if (clickCtxRef.current && clickCtxRef.current.state !== "closed") {
-      clickCtxRef.current.close();
-      clickCtxRef.current = null;
     }
   }, []);
 
@@ -89,27 +60,6 @@ export default function RecordStep({ onComplete }: Props) {
     };
   }, [cleanup]);
 
-  /** Start the click track that plays throughout recording */
-  function startClickTrack(ctx: AudioContext, bpmVal: number, bpb: number) {
-    const beatInterval = 60 / bpmVal;
-    let beatCount = 0;
-    const startTime = ctx.currentTime;
-
-    function tick() {
-      const now = ctx.currentTime;
-      while (startTime + beatCount * beatInterval < now + 0.5) {
-        const t = startTime + beatCount * beatInterval;
-        if (t >= now - 0.01) {
-          scheduleClick(ctx, Math.max(t, now), beatCount % bpb === 0);
-        }
-        beatCount++;
-      }
-    }
-
-    tick();
-    clickTimerRef.current = setInterval(tick, 200);
-  }
-
   const stopRecordingRef = useRef<(() => void) | null>(null);
 
   const startRecording = async () => {
@@ -117,67 +67,32 @@ export default function RecordStep({ onComplete }: Props) {
       setError(null);
       readingsRef.current = [];
       setCurrentNote(null);
-      setCurrentBar(0);
+      setElapsed(0);
 
       const recorder = await createRecorder();
       recorderRef.current = recorder;
 
-      const clickCtx = new AudioContext();
-      clickCtxRef.current = clickCtx;
+      setPhase("recording");
 
-      // --- Count-in phase ---
-      setPhase("countin");
-      setCountBeat(0);
-
-      const beatMs = (60 / bpm) * 1000;
-
-      const now = clickCtx.currentTime + 0.05;
-      for (let i = 0; i < beatsPerBar; i++) {
-        scheduleClick(clickCtx, now + i * (60 / bpm), i === 0);
-      }
-
-      let beat = 1;
-      setCountBeat(1);
-      const countInterval = setInterval(() => {
-        beat++;
-        if (beat <= beatsPerBar) {
-          setCountBeat(beat);
+      stopPitchRef.current = startPitchTracking(
+        recorder.analyserNode,
+        recorder.audioContext,
+        (reading) => {
+          readingsRef.current.push(reading);
+          setCurrentNote(freqToNoteName(reading.frequency));
         }
-      }, beatMs);
+      );
 
-      countInTimerRef.current = setTimeout(() => {
-        clearInterval(countInterval);
-        setCountBeat(0);
-        setPhase("recording");
+      recorder.startRecording();
 
-        stopPitchRef.current = startPitchTracking(
-          recorder.analyserNode,
-          recorder.audioContext,
-          (reading) => {
-            readingsRef.current.push(reading);
-            setCurrentNote(freqToNoteName(reading.frequency));
-          }
-        );
+      const start = Date.now();
+      timerRef.current = setInterval(() => {
+        setElapsed((Date.now() - start) / 1000);
+      }, 100);
 
-        recorder.startRecording();
-
-        const beatDuration = 60 / bpm;
-        const barDuration = beatsPerBar * beatDuration;
-        const maxDuration = barDuration * TOTAL_BARS;
-        const start = Date.now();
-
-        timerRef.current = setInterval(() => {
-          const sec = (Date.now() - start) / 1000;
-          const bar = Math.min(Math.floor(sec / barDuration) + 1, TOTAL_BARS);
-          const beatInBar = Math.floor((sec % barDuration) / beatDuration) + 1;
-          setCurrentBar(bar);
-          setCurrentBeat(beatInBar);
-        }, 50);
-
-        autoStopTimerRef.current = setTimeout(() => {
-          stopRecordingRef.current?.();
-        }, maxDuration * 1000);
-      }, beatMs * beatsPerBar);
+      autoStopTimerRef.current = setTimeout(() => {
+        stopRecordingRef.current?.();
+      }, MAX_RECORDING_SECONDS * 1000);
     } catch {
       setError("Microphone access denied. Please allow microphone permissions.");
       setPhase("idle");
@@ -235,16 +150,6 @@ export default function RecordStep({ onComplete }: Props) {
     }
   };
 
-  const cancelCountIn = () => {
-    cleanup();
-    setPhase("idle");
-    setCountBeat(0);
-    if (recorderRef.current) {
-      recorderRef.current.cleanup();
-      recorderRef.current = null;
-    }
-  };
-
   return (
     <div className="flex flex-col items-center gap-6">
       {phase !== "idle" && (
@@ -265,38 +170,11 @@ export default function RecordStep({ onComplete }: Props) {
         </div>
       )}
 
-      {/* Count-in display */}
-      {phase === "countin" && (
-        <div className="flex flex-col items-center gap-2">
-          <span className="text-5xl font-bold text-neon-cyan animate-pulse">{countBeat}</span>
-          <p className="text-text-secondary text-xs">Get ready...</p>
-        </div>
-      )}
-
-      {/* Visual metronome + note display */}
+      {/* Recording display: elapsed time + detected note */}
       {phase === "recording" && (
         <div className="flex flex-col items-center gap-3">
-          <div className="flex items-center gap-2">
-            {Array.from({ length: beatsPerBar }, (_, i) => {
-              const beatNum = i + 1;
-              const isActive = currentBeat === beatNum;
-              const isDownbeat = beatNum === 1;
-              return (
-                <div
-                  key={i}
-                  className={`rounded-full transition-all duration-100 ${
-                    isActive
-                      ? isDownbeat
-                        ? "w-5 h-5 bg-neon-cyan shadow-[0_0_12px_rgba(34,211,238,0.7)]"
-                        : "w-4 h-4 bg-neon-purple shadow-[0_0_10px_rgba(168,85,247,0.6)]"
-                      : "w-3 h-3 bg-surface-card border border-text-secondary/30"
-                  }`}
-                />
-              );
-            })}
-          </div>
-          <div className="text-text-secondary text-xs tabular-nums">
-            Bar {currentBar} / {TOTAL_BARS}
+          <div className="text-2xl font-bold text-neon-cyan tabular-nums">
+            {formatTime(elapsed)}
           </div>
           <div className="h-8 flex items-center justify-center">
             {currentNote ? (
@@ -323,8 +201,6 @@ export default function RecordStep({ onComplete }: Props) {
           onClick={
             phase === "idle"
               ? startRecording
-              : phase === "countin"
-              ? cancelCountIn
               : phase === "recording"
               ? stopRecording
               : undefined
@@ -333,18 +209,12 @@ export default function RecordStep({ onComplete }: Props) {
           className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${
             phase === "recording"
               ? "bg-red-500 hover:bg-red-400 animate-recording-pulse"
-              : phase === "countin"
-              ? "bg-yellow-500 hover:bg-yellow-400"
               : "bg-neon-purple hover:bg-neon-purple/80 animate-pulse-neon"
           } ${phase === "uploading" ? "opacity-50 cursor-not-allowed" : ""}`}
         >
           {phase === "recording" ? (
             <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
               <rect x="6" y="6" width="12" height="12" rx="2" />
-            </svg>
-          ) : phase === "countin" ? (
-            <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           ) : (
             <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
@@ -370,9 +240,7 @@ export default function RecordStep({ onComplete }: Props) {
         {phase === "uploading"
           ? "Analyzing audio file..."
           : phase === "recording"
-          ? "Hum your melody..."
-          : phase === "countin"
-          ? "Count-in — click to cancel"
+          ? "Hum your melody... tap stop when done"
           : "Tap to record or upload an audio file"}
       </p>
 

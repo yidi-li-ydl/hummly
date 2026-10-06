@@ -52,6 +52,20 @@ export type DrumKit = "acoustic-kit" | "LINN" | "CR78" | "Kit3" | "Kit8";
 
 export type MelodyVoice = "real" | "piano";
 
+export interface ChordPatternHit {
+  beat: number;      // position within bar: 0 = beat 1, 0.5 = beat 1 upbeat, 1 = beat 2...
+  tones: number[];   // chord tone indices: 0=root, 1=3rd, 2=5th. >=length wraps + octave up
+  velocity: number;  // 0-1 volume multiplier
+  sustain: number;   // duration in beats
+}
+
+export interface ChordPattern {
+  name: string;
+  description: string;
+  beatsPerBar: number;
+  hits: ChordPatternHit[];
+}
+
 export interface MixVolumes {
   melody: number;
   chords: number;
@@ -79,6 +93,7 @@ export interface HummlyState {
   step: WizardStep;
   bpm: number;
   beatsPerBar: number;
+  beatOffset: number;
   voicePcm: VoicePcm | null;
   pitchReadings: PitchReading[];
   notes: QuantizedNote[];
@@ -92,6 +107,7 @@ export interface HummlyState {
   drumOptions: DrumStyle[];
   selectedDrums: DrumStyle | null;
   mixBuffer: AudioBuffer | null;
+  chordPattern: ChordPattern | null;
   mixUrl: string | null;
   error: string | null;
 }
@@ -111,7 +127,9 @@ export type HummlyAction =
   | { type: "SET_DRUM_OPTIONS"; options: DrumStyle[] }
   | { type: "SELECT_DRUMS"; style: DrumStyle }
   | { type: "SET_DRUM_KIT"; kit: DrumKit }
+  | { type: "SET_CHORD_PATTERN"; pattern: ChordPattern }
   | { type: "SET_MIX"; buffer: AudioBuffer; url: string }
   | { type: "SET_MELODY_VOICE"; voice: MelodyVoice }
+  | { type: "SET_BEAT_OFFSET"; offset: number }
   | { type: "SET_ERROR"; error: string }
   | { type: "RESET" };
