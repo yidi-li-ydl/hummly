@@ -106,14 +106,14 @@ export function quantizeNotes(readings: PitchReading[]): QuantizedNote[] {
  * Snap note start times and durations to the nearest beat subdivision.
  * subdivision = 16 means snap to 16th notes.
  */
-export function snapToGrid(notes: QuantizedNote[], bpm: number, subdivision = 16): QuantizedNote[] {
+export function snapToGrid(notes: QuantizedNote[], bpm: number, subdivision = 16, beatOffset = 0): QuantizedNote[] {
   if (notes.length === 0) return [];
 
   const beatDuration = 60 / bpm; // seconds per beat
   const gridUnit = beatDuration / (subdivision / 4); // seconds per grid unit (16th = beatDuration/4)
 
   function snapTime(t: number): number {
-    return Math.round(t / gridUnit) * gridUnit;
+    return beatOffset + Math.round((t - beatOffset) / gridUnit) * gridUnit;
   }
 
   function snapDuration(d: number): number {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect } from "react";
+import AlignTimeline from "./AlignTimeline";
 import type { KeyResult, VoicePcm } from "@/lib/types";
 
 interface Props {
@@ -34,6 +35,12 @@ export default function ReviewStep({
   const [bpmDraft, setBpmDraft] = useState(String(bpm));
   const [bpmFocused, setBpmFocused] = useState(false);
 
+  // Refs so the click scheduler always reads fresh values
+  const beatOffsetRef = useRef(beatOffset);
+  const beatsPerBarRef = useRef(beatsPerBar);
+  useEffect(() => { beatOffsetRef.current = beatOffset; }, [beatOffset]);
+  useEffect(() => { beatsPerBarRef.current = beatsPerBar; }, [beatsPerBar]);
+
   const stopPlayback = useCallback(() => {
     if (voiceSourceRef.current) {
       try { voiceSourceRef.current.stop(); } catch { /* already stopped */ }
@@ -51,11 +58,12 @@ export default function ReviewStep({
     setCurrentBeat(0);
   }, []);
 
-  // Stop playback when BPM, beatsPerBar, or beatOffset changes
+  // Stop playback when BPM or beatsPerBar changes (but NOT beatOffset —
+  // beatOffset is read live via ref so the click track updates in real time)
   useEffect(() => {
     if (isPlaying) stopPlayback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bpm, beatsPerBar, beatOffset]);
+  }, [bpm, beatsPerBar]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -86,58 +94,72 @@ export default function ReviewStep({
     source.onended = () => stopPlayback();
     voiceSourceRef.current = source;
 
-    // Schedule click track — offset by beatOffset so clicks align with the melody
+    // Click scheduling that reads beatOffset from ref for live updates.
+    // We track which absolute beat times we've already scheduled to avoid
+    // double-scheduling when beatOffset changes mid-playback.
     const beatInterval = 60 / bpm;
-    let beatCount = 0;
     const startTime = ctx.currentTime;
+    const scheduled = new Set<string>();
 
     function scheduleClicks() {
       const now = ctx.currentTime;
-      while (startTime + beatOffset + beatCount * beatInterval < now + 0.3) {
-        const t = startTime + beatOffset + beatCount * beatInterval;
-        if (t >= now - 0.01) {
-          const isDownbeat = beatCount % beatsPerBar === 0;
+      const offset = beatOffsetRef.current;
+      const bpb = beatsPerBarRef.current;
 
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.frequency.value = isDownbeat ? 1000 : 800;
-          gain.gain.setValueAtTime(isDownbeat ? 0.4 : 0.25, Math.max(t, now));
-          gain.gain.exponentialRampToValueAtTime(0.001, Math.max(t, now) + 0.05);
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(Math.max(t, now));
-          osc.stop(Math.max(t, now) + 0.06);
+      // Schedule clicks for the next 0.3s window
+      // Find the first beat index that could be in our window
+      const windowStart = now - startTime - 0.01;
+      const windowEnd = now - startTime + 0.3;
+      const firstBeat = Math.max(0, Math.floor((windowStart - offset) / beatInterval));
+
+      for (let i = firstBeat; ; i++) {
+        const relT = offset + i * beatInterval;
+        const absT = startTime + relT;
+        if (relT > windowEnd) break;
+        if (relT < windowStart) continue;
+
+        // Unique key to avoid double-scheduling
+        const key = `${i}-${offset.toFixed(3)}`;
+        if (scheduled.has(key)) continue;
+        scheduled.add(key);
+
+        const isDownbeat = i % bpb === 0;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = isDownbeat ? 1000 : 800;
+        gain.gain.setValueAtTime(isDownbeat ? 0.4 : 0.25, absT);
+        gain.gain.exponentialRampToValueAtTime(0.001, absT + 0.05);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(absT);
+        osc.stop(absT + 0.06);
+      }
+
+      // Update visual beat counter
+      const elapsed = now - startTime - offset;
+      if (elapsed < 0) {
+        setCurrentBeat(0);
+      } else {
+        setCurrentBeat((Math.floor(elapsed / beatInterval) % bpb) + 1);
+      }
+
+      // Prune old keys to prevent memory buildup
+      if (scheduled.size > 200) {
+        const cutoff = now - startTime - 1;
+        for (const k of scheduled) {
+          const beatIdx = parseInt(k.split("-")[0]);
+          if (offset + beatIdx * beatInterval < cutoff) {
+            scheduled.delete(k);
+          }
         }
-        beatCount++;
       }
     }
 
     scheduleClicks();
-    clickTimerRef.current = setInterval(scheduleClicks, 150);
-
-    // Visual beat counter
-    const visualTimer = setInterval(() => {
-      if (!audioCtxRef.current) return;
-      const elapsed = audioCtxRef.current.currentTime - startTime;
-      const beat = (Math.floor(elapsed / beatInterval) % beatsPerBar) + 1;
-      setCurrentBeat(beat);
-    }, 50);
-
-    // Store the visual timer to clean up
-    const origTimer = clickTimerRef.current;
-    clickTimerRef.current = setInterval(() => {
-      scheduleClicks();
-      if (!audioCtxRef.current) return;
-      const elapsed = audioCtxRef.current.currentTime - startTime - beatOffset;
-      if (elapsed < 0) { setCurrentBeat(0); return; }
-      const beat = (Math.floor(elapsed / beatInterval) % beatsPerBar) + 1;
-      setCurrentBeat(beat);
-    }, 100);
-    clearInterval(origTimer);
-    clearInterval(visualTimer);
+    clickTimerRef.current = setInterval(scheduleClicks, 100);
 
     setIsPlaying(true);
-  }, [voicePcm, bpm, beatsPerBar, beatOffset, stopPlayback]);
+  }, [voicePcm, bpm, stopPlayback]);
 
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
@@ -146,6 +168,10 @@ export default function ReviewStep({
       startPlayback();
     }
   }, [isPlaying, stopPlayback, startPlayback]);
+
+  const voiceDuration = voicePcm
+    ? voicePcm.channels[0].length / voicePcm.sampleRate
+    : 0;
 
   return (
     <div className="flex flex-col items-center gap-8 py-4">
@@ -240,9 +266,20 @@ export default function ReviewStep({
           )}
 
           <p className="text-text-secondary text-xs">
-            {isPlaying ? "Listening... adjust BPM until the clicks match your rhythm" : "Play to hear your recording with click track"}
+            {isPlaying ? "Listening... adjust BPM or click offset until the clicks match" : "Play to hear your recording with click track"}
           </p>
         </div>
+      )}
+
+      {/* Beat offset alignment — below playback so user plays first, then adjusts */}
+      {voicePcm && (
+        <AlignTimeline
+          voiceDuration={voiceDuration}
+          bpm={bpm}
+          beatsPerBar={beatsPerBar}
+          beatOffset={beatOffset}
+          onChange={onBeatOffsetChange}
+        />
       )}
 
       {/* Continue button */}

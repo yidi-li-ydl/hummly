@@ -21,12 +21,13 @@ interface Props {
   melodyVoice: MelodyVoice;
   drumKit: DrumKit;
   onMelodyVoiceChange: (voice: MelodyVoice) => void;
+  beatOffset: number;
   onStartOver: () => void;
 }
 
 const ZERO_OFFSETS: MixOffsets = { voice: 0, chords: 0, drums: 0 };
 
-export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, chordPattern, drumKit, onStartOver }: Props) {
+export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, chordPattern, drumKit, beatOffset, onStartOver }: Props) {
   const [status, setStatus] = useState<"rendering" | "ready" | "error">("rendering");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [vocalUrl, setVocalUrl] = useState<string | null>(null);
@@ -41,7 +42,7 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
   const [pendingOffsets, setPendingOffsets] = useState<MixOffsets>(ZERO_OFFSETS);
 
   const voiceEq: VoiceEQ = { lowCut: 80, presence: 0 };
-  const snappedNotes = useMemo(() => snapToGrid(notes, bpm), [notes, bpm]);
+  const snappedNotes = useMemo(() => snapToGrid(notes, bpm, 16, beatOffset), [notes, bpm, beatOffset]);
 
   const barDuration = (beatsPerBar * 60) / bpm;
   const voiceDuration = voicePcm ? voicePcm.channels[0].length / voicePcm.sampleRate : 0;

@@ -228,6 +228,7 @@ export default function StepWizard() {
           chordPattern={state.chordPattern}
           melodyVoice={state.melodyVoice}
           drumKit={state.drumKit}
+          beatOffset={state.beatOffset}
           onMelodyVoiceChange={handleMelodyVoiceChange}
           onStartOver={handleStartOver}
         />
