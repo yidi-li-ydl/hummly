@@ -3,7 +3,6 @@
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { renderMix, downloadWav } from "@/lib/audio/mixer";
 import { snapToGrid } from "@/lib/audio/noteQuantizer";
-import Timeline from "./Timeline";
 import type { ChordInstrument, ChordPattern, DrumKit, MelodyVoice, MixOffsets, MixVolumes, QuantizedNote, ChordProgression, DrumStyle, KeyResult, PitchReading, VoiceEQ, VoicePcm } from "@/lib/types";
 
 interface Props {
@@ -25,8 +24,6 @@ interface Props {
   onStartOver: () => void;
 }
 
-const ZERO_OFFSETS: MixOffsets = { voice: 0, chords: 0, drums: 0 };
-
 export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, chordPattern, drumKit, beatOffset, onStartOver }: Props) {
   const [status, setStatus] = useState<"rendering" | "ready" | "error">("rendering");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -38,23 +35,17 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
   const instrRef = useRef<HTMLAudioElement | null>(null);
   const hasRendered = useRef(false);
 
-  const [offsets, setOffsets] = useState<MixOffsets>(ZERO_OFFSETS);
-  const [pendingOffsets, setPendingOffsets] = useState<MixOffsets>(ZERO_OFFSETS);
-
   const voiceEq: VoiceEQ = { lowCut: 80, presence: 0 };
   const snappedNotes = useMemo(() => snapToGrid(notes, bpm, 16, beatOffset), [notes, bpm, beatOffset]);
 
-  const barDuration = (beatsPerBar * 60) / bpm;
-  const voiceDuration = voicePcm ? voicePcm.channels[0].length / voicePcm.sampleRate : 0;
-  const baseBars = Math.max(4, Math.ceil(voiceDuration / barDuration));
-  const backingDuration = baseBars * barDuration;
+  // Backing tracks start at beatOffset so they align with the voice's first beat
+  const mixOffsets = useMemo<MixOffsets>(() => ({
+    voice: 0,
+    chords: beatOffset,
+    drums: beatOffset,
+  }), [beatOffset]);
 
-  const hasChanges =
-    pendingOffsets.voice !== offsets.voice ||
-    pendingOffsets.chords !== offsets.chords ||
-    pendingOffsets.drums !== offsets.drums;
-
-  const doRender = useCallback(async (mixOffsets: MixOffsets) => {
+  const doRender = useCallback(async (offsets: MixOffsets) => {
     const volWith: MixVolumes = { melody: 1, chords: 1, drums: 1 };
     const volWithout: MixVolumes = { melody: 0, chords: 1, drums: 1 };
 
@@ -63,13 +54,13 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
         snappedNotes, chords ?? undefined, chordsB ?? undefined, drums ?? undefined, undefined, bpm,
         voicePcm ?? undefined, pitchReadings, detectedKey,
         chordInstrument, beatsPerBar, "real", volWith, voiceEq, notes, drumKit,
-        mixOffsets, chordPattern ?? undefined
+        offsets, chordPattern ?? undefined
       ),
       renderMix(
         snappedNotes, chords ?? undefined, chordsB ?? undefined, drums ?? undefined, undefined, bpm,
         voicePcm ?? undefined, pitchReadings, detectedKey,
         chordInstrument, beatsPerBar, "real", volWithout, voiceEq, notes, drumKit,
-        mixOffsets, chordPattern ?? undefined
+        offsets, chordPattern ?? undefined
       ),
     ]);
 
@@ -84,7 +75,7 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
 
     async function render() {
       try {
-        const { withVoice, withoutVoice } = await doRender(ZERO_OFFSETS);
+        const { withVoice, withoutVoice } = await doRender(mixOffsets);
         setVocalUrl(withVoice.url);
         setInstrUrl(withoutVoice.url);
         setStatus("ready");
@@ -123,30 +114,6 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
     }
     setIsPlaying(false);
   }, []);
-
-  const handleApply = useCallback(async () => {
-    stopPlayback();
-    vocalRef.current = null;
-    instrRef.current = null;
-
-    if (vocalUrl) URL.revokeObjectURL(vocalUrl);
-    if (instrUrl) URL.revokeObjectURL(instrUrl);
-
-    setStatus("rendering");
-    setErrorMsg(null);
-
-    try {
-      const { withVoice, withoutVoice } = await doRender(pendingOffsets);
-      setVocalUrl(withVoice.url);
-      setInstrUrl(withoutVoice.url);
-      setOffsets(pendingOffsets);
-      setStatus("ready");
-    } catch (err) {
-      console.error("Re-render failed:", err);
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-      setStatus("error");
-    }
-  }, [stopPlayback, vocalUrl, instrUrl, doRender, pendingOffsets]);
 
   const togglePlay = () => {
     if (!vocalUrl || !instrUrl) return;
@@ -217,30 +184,6 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
           {[chords && `${chords.name} chords`, drums && `${drums.name} drums`].filter(Boolean).join(" + ") || "Voice only"} @ {bpm} BPM
         </p>
       </div>
-
-      {/* Draggable timeline */}
-      <Timeline
-        voiceDuration={voiceDuration}
-        backingDuration={backingDuration}
-        offsets={pendingOffsets}
-        onChange={setPendingOffsets}
-        hasVoice={!!voicePcm}
-        hasChords={!!chords}
-        hasDrums={!!drums}
-      />
-
-      {/* Apply button — only visible when offsets changed */}
-      {hasChanges && (
-        <button
-          onClick={handleApply}
-          className="flex items-center gap-2 px-5 py-2 rounded-lg bg-neon-green/20 hover:bg-neon-green/30 border border-neon-green/50 text-neon-green text-sm font-medium transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          Apply Offsets
-        </button>
-      )}
 
       {/* Voice on/off toggle */}
       <button
