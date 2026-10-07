@@ -15,11 +15,6 @@ interface Props {
   onContinue: () => void;
 }
 
-const TIME_SIG_OPTIONS: { label: string; value: number }[] = [
-  { label: "4/4", value: 4 },
-  { label: "3/4", value: 3 },
-];
-
 export default function ReviewStep({
   detectedKey,
   bpm,
@@ -249,61 +244,6 @@ export default function ReviewStep({
           </p>
         </div>
       )}
-
-      {/* Beat Offset — shift when the first click lands */}
-      <div className="flex flex-col items-center gap-2">
-        <p className="text-text-secondary text-xs uppercase tracking-wider">Beat Alignment</p>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => {
-              const step = 0.01;
-              const beatPeriod = 60 / bpm;
-              const next = ((beatOffset - step) % beatPeriod + beatPeriod) % beatPeriod;
-              onBeatOffsetChange(next);
-            }}
-            className="w-8 h-8 rounded-full bg-surface-card hover:bg-surface-secondary flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors text-sm font-bold"
-          >
-            -
-          </button>
-          <span className="text-sm font-mono text-neon-cyan tabular-nums w-16 text-center">
-            {Math.round(beatOffset * 1000)}ms
-          </span>
-          <button
-            onClick={() => {
-              const step = 0.01;
-              const beatPeriod = 60 / bpm;
-              const next = (beatOffset + step) % beatPeriod;
-              onBeatOffsetChange(next);
-            }}
-            className="w-8 h-8 rounded-full bg-surface-card hover:bg-surface-secondary flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors text-sm font-bold"
-          >
-            +
-          </button>
-        </div>
-        <p className="text-text-secondary text-xs text-center max-w-xs">
-          Shift when the clicks start — adjust if they don&apos;t land on your beats
-        </p>
-      </div>
-
-      {/* Time Signature */}
-      <div className="flex flex-col items-center gap-2">
-        <p className="text-text-secondary text-xs uppercase tracking-wider">Time Signature</p>
-        <div className="flex gap-2">
-          {TIME_SIG_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => onBeatsPerBarChange(opt.value)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium font-mono transition-colors ${
-                beatsPerBar === opt.value
-                  ? "bg-neon-purple text-white"
-                  : "bg-surface-card hover:bg-surface-secondary text-text-secondary"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
 
       {/* Continue button */}
       <button
