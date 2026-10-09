@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { previewChords, stopPreview } from "@/lib/audio/mixer";
 import { rankBProgressions } from "@/lib/audio/chordGenerator";
 import { CHORD_PATTERNS } from "@/lib/audio/chordPatterns";
@@ -38,6 +38,11 @@ export default function ChordStep({ options, detectedKey, bpm, beatsPerBar, onSe
   const [selectedPattern, setSelectedPattern] = useState<ChordPattern>(
     () => CHORD_PATTERNS.find((p) => p.beatsPerBar === beatsPerBar) ?? CHORD_PATTERNS[0]
   );
+
+  // Stop preview audio on unmount
+  useEffect(() => {
+    return () => stopPreview();
+  }, []);
 
   const filteredOptions = useMemo(() => {
     if (filter === "all") return options;

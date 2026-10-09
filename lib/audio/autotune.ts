@@ -1,4 +1,5 @@
 import type { PitchReading, KeyResult, QuantizedNote } from "../types";
+import { RubberBandInterface } from "rubberband-wasm";
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
@@ -114,118 +115,243 @@ export function autotuneVoice(
   return output;
 }
 
+/** Cached rubberband WASM module — loaded once, reused across calls. */
+let rbWasmModule: WebAssembly.Module | null = null;
+
+export async function getRubberBandApi(): Promise<RubberBandInterface> {
+  if (!rbWasmModule) {
+    const resp = await fetch("/rubberband.wasm");
+    rbWasmModule = await WebAssembly.compileStreaming(resp);
+  }
+  return RubberBandInterface.initialize(rbWasmModule);
+}
+
+/**
+ * Time-stretch a single audio segment using rubberband (pitch-preserving).
+ *
+ * @param rb       Initialized RubberBandInterface
+ * @param channels Input audio per channel
+ * @param sr       Sample rate
+ * @param ratio    Time ratio: >1 = slower (stretch), <1 = faster (compress)
+ * @returns        Stretched audio per channel
+ */
+export function stretchSegment(
+  rb: RubberBandInterface,
+  channels: Float32Array[],
+  sr: number,
+  ratio: number
+): Float32Array[] {
+  const numCh = channels.length;
+  const inputLen = channels[0].length;
+
+  // Skip trivial identity stretches
+  if (Math.abs(ratio - 1.0) < 0.001) {
+    return channels.map((ch) => ch.slice());
+  }
+
+  // Clamp extreme ratios to avoid artifacts
+  const clampedRatio = Math.max(0.25, Math.min(4.0, ratio));
+
+  const state = rb.rubberband_new(sr, numCh, 0, clampedRatio, 1.0);
+  rb.rubberband_set_expected_input_duration(state, inputLen);
+
+  const blockSize = rb.rubberband_get_samples_required(state);
+  const outputLen = Math.ceil(inputLen * clampedRatio) + blockSize;
+
+  // Allocate WASM memory: pointer array for channels + per-channel buffer
+  const channelArrayPtr = rb.malloc(numCh * 4);
+  const channelPtrs: number[] = [];
+  for (let ch = 0; ch < numCh; ch++) {
+    const ptr = rb.malloc(Math.max(blockSize, outputLen) * 4);
+    channelPtrs.push(ptr);
+    rb.memWritePtr(channelArrayPtr + ch * 4, ptr);
+  }
+
+  // --- Study phase (required for offline mode) ---
+  let read = 0;
+  while (read < inputLen) {
+    const remaining = Math.min(blockSize, inputLen - read);
+    for (let ch = 0; ch < numCh; ch++) {
+      rb.memWrite(channelPtrs[ch], channels[ch].subarray(read, read + remaining));
+    }
+    read += remaining;
+    rb.rubberband_study(state, channelArrayPtr, remaining, read >= inputLen ? 1 : 0);
+  }
+
+  // --- Process phase ---
+  read = 0;
+  const outputChunks: Float32Array[][] = Array.from({ length: numCh }, () => []);
+  let totalWritten = 0;
+
+  const retrieve = (final: boolean) => {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const available = rb.rubberband_available(state);
+      if (available < 1) break;
+      if (!final && available < blockSize) break;
+      const toRead = Math.min(blockSize, available);
+      const got = rb.rubberband_retrieve(state, channelArrayPtr, toRead);
+      for (let ch = 0; ch < numCh; ch++) {
+        outputChunks[ch].push(rb.memReadF32(channelPtrs[ch], got).slice());
+      }
+      totalWritten += got;
+    }
+  };
+
+  while (read < inputLen) {
+    const remaining = Math.min(blockSize, inputLen - read);
+    for (let ch = 0; ch < numCh; ch++) {
+      rb.memWrite(channelPtrs[ch], channels[ch].subarray(read, read + remaining));
+    }
+    read += remaining;
+    rb.rubberband_process(state, channelArrayPtr, remaining, read >= inputLen ? 1 : 0);
+    retrieve(false);
+  }
+  retrieve(true);
+
+  // --- Cleanup WASM resources ---
+  rb.rubberband_delete(state);
+  for (const ptr of channelPtrs) rb.free(ptr);
+  rb.free(channelArrayPtr);
+
+  // --- Concat output chunks ---
+  const result: Float32Array[] = [];
+  for (let ch = 0; ch < numCh; ch++) {
+    const out = new Float32Array(totalWritten);
+    let offset = 0;
+    for (const chunk of outputChunks[ch]) {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    }
+    result.push(out);
+  }
+  return result;
+}
+
 /**
  * Time-warp voice audio so note onsets align with a beat grid.
  *
- * Uses continuous sample-by-sample resampling with a piecewise-linear time map.
- * For each output sample, the corresponding input position is calculated via
- * linear interpolation between anchor points (note onsets). No cutting, no
- * windowing, no grains — just reads the original samples at slightly shifted
- * positions. For typical timing corrections (<2%), the pitch change is
- * imperceptible.
+ * Uses rubberband-wasm for professional-quality time-stretching that
+ * preserves pitch. The audio is split into segments between anchor points
+ * (note onsets), and each segment is independently stretched/compressed
+ * to match the target timing.
  */
-export function beatAlignVoice(
+export async function beatAlignVoice(
   voiceChannels: Float32Array[],
   voiceSampleRate: number,
   originalNotes: QuantizedNote[],
   snappedNotes: QuantizedNote[]
-): Float32Array[] {
+): Promise<Float32Array[]> {
   if (originalNotes.length === 0 || snappedNotes.length === 0) return voiceChannels;
 
   const inputLen = voiceChannels[0].length;
   const numChannels = voiceChannels.length;
 
-  // Build anchor points: output time → input time
-  interface Anchor { out: number; in_: number }
+  // Build anchor points: input time → output time
+  interface Anchor { inTime: number; outTime: number }
   const anchors: Anchor[] = [];
 
-  // First anchor: start of audio (identity before first note)
-  const firstOrigT = originalNotes[0].startTime;
-  const firstSnapT = snappedNotes[0].startTime;
-  const preOffset = firstSnapT - firstOrigT;
-
-  // Anchor at t=0: if voice needs to shift right, output t=0 maps to input t=0
-  anchors.push({ out: 0, in_: Math.max(0, -preOffset) });
+  // Anchor at t=0 (identity before first note)
+  anchors.push({ inTime: 0, outTime: 0 });
 
   // Anchor for each note onset
   for (let i = 0; i < originalNotes.length; i++) {
     anchors.push({
-      out: snappedNotes[i].startTime,
-      in_: originalNotes[i].startTime,
+      inTime: originalNotes[i].startTime,
+      outTime: snappedNotes[i].startTime,
     });
   }
 
-  // Final anchor: end of audio
+  // Final anchor: end of last note
   const lastOrig = originalNotes[originalNotes.length - 1];
   const lastSnap = snappedNotes[snappedNotes.length - 1];
-  const lastOrigEnd = lastOrig.startTime + lastOrig.duration;
-  const lastSnapEnd = lastSnap.startTime + lastSnap.duration;
-  anchors.push({ out: lastSnapEnd, in_: lastOrigEnd });
+  anchors.push({
+    inTime: lastOrig.startTime + lastOrig.duration,
+    outTime: lastSnap.startTime + lastSnap.duration,
+  });
 
-  // Sort and deduplicate
-  anchors.sort((a, b) => a.out - b.out);
+  // Tail anchor: end of audio maps to proportionally shifted end
+  const inputDuration = inputLen / voiceSampleRate;
+  const lastInTime = anchors[anchors.length - 1].inTime;
+  const lastOutTime = anchors[anchors.length - 1].outTime;
+  if (lastInTime < inputDuration) {
+    anchors.push({
+      inTime: inputDuration,
+      outTime: lastOutTime + (inputDuration - lastInTime),
+    });
+  }
+
+  // Sort by input time and deduplicate (ensure monotonic in both dimensions)
+  anchors.sort((a, b) => a.inTime - b.inTime);
   const pts: Anchor[] = [anchors[0]];
   for (let i = 1; i < anchors.length; i++) {
-    if (anchors[i].out - pts[pts.length - 1].out > 0.0005) {
-      // Ensure input times are monotonically non-decreasing
-      if (anchors[i].in_ >= pts[pts.length - 1].in_) {
-        pts.push(anchors[i]);
-      }
+    const prev = pts[pts.length - 1];
+    if (anchors[i].inTime - prev.inTime > 0.001 && anchors[i].outTime > prev.outTime) {
+      pts.push(anchors[i]);
     }
   }
 
-  // If we couldn't build a valid monotonic map, return original
   if (pts.length < 2) return voiceChannels;
 
-  // Output length
-  const outputDuration = Math.max(
-    inputLen / voiceSampleRate,
-    lastSnapEnd + 0.5
-  );
-  const outputLen = Math.ceil(outputDuration * voiceSampleRate);
+  // Initialize rubberband
+  const rb = await getRubberBandApi();
 
-  // Time map function: output time → input time (piecewise linear)
-  function mapTime(t: number): number {
-    if (t <= pts[0].out) return pts[0].in_ + (t - pts[0].out);
-    if (t >= pts[pts.length - 1].out) {
-      const last = pts[pts.length - 1];
-      return last.in_ + (t - last.out);
+  // Process each segment between consecutive anchor points
+  const outputSegments: { data: Float32Array[]; outStart: number }[] = [];
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    const inStart = Math.round(pts[i].inTime * voiceSampleRate);
+    const inEnd = Math.round(pts[i + 1].inTime * voiceSampleRate);
+    const segLen = inEnd - inStart;
+
+    if (segLen <= 0) continue;
+
+    const inDuration = (inEnd - inStart) / voiceSampleRate;
+    const outDuration = pts[i + 1].outTime - pts[i].outTime;
+
+    if (outDuration <= 0) continue;
+
+    // timeRatio = output duration / input duration
+    const timeRatio = outDuration / inDuration;
+
+    // Extract segment from each channel
+    const segChannels: Float32Array[] = [];
+    for (let ch = 0; ch < numChannels; ch++) {
+      segChannels.push(voiceChannels[ch].subarray(
+        Math.max(0, inStart),
+        Math.min(inputLen, inEnd)
+      ));
     }
-    let lo = 0;
-    let hi = pts.length - 1;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (pts[mid].out <= t) lo = mid;
-      else hi = mid;
-    }
-    const p0 = pts[lo];
-    const p1 = pts[hi];
-    const ratio = (t - p0.out) / (p1.out - p0.out);
-    return p0.in_ + ratio * (p1.in_ - p0.in_);
+
+    const stretched = stretchSegment(rb, segChannels, voiceSampleRate, timeRatio);
+    outputSegments.push({ data: stretched, outStart: pts[i].outTime });
   }
 
-  // Resample: for each output sample, read from the mapped input position
+  // Calculate total output length
+  let totalOutSamples = 0;
+  for (const seg of outputSegments) {
+    const endSample = Math.round(seg.outStart * voiceSampleRate) + seg.data[0].length;
+    if (endSample > totalOutSamples) totalOutSamples = endSample;
+  }
+  // At minimum, match input length
+  totalOutSamples = Math.max(totalOutSamples, inputLen);
+
+  // Assemble output
   const output: Float32Array[] = [];
   for (let ch = 0; ch < numChannels; ch++) {
-    const src = voiceChannels[ch];
-    const dst = new Float32Array(outputLen);
+    output.push(new Float32Array(totalOutSamples));
+  }
 
-    for (let i = 0; i < outputLen; i++) {
-      const outTime = i / voiceSampleRate;
-      const inTime = mapTime(outTime);
-      const inPos = inTime * voiceSampleRate;
-
-      // Linear interpolation
-      const idx = Math.floor(inPos);
-      const frac = inPos - idx;
-      if (idx >= 0 && idx + 1 < inputLen) {
-        dst[i] = src[idx] * (1 - frac) + src[idx + 1] * frac;
-      } else if (idx >= 0 && idx < inputLen) {
-        dst[i] = src[idx];
+  for (const seg of outputSegments) {
+    const outOffset = Math.round(seg.outStart * voiceSampleRate);
+    for (let ch = 0; ch < numChannels; ch++) {
+      const dst = output[ch];
+      const src = seg.data[ch];
+      const copyLen = Math.min(src.length, dst.length - outOffset);
+      for (let j = 0; j < copyLen; j++) {
+        dst[outOffset + j] = src[j];
       }
     }
-
-    output.push(dst);
   }
 
   return output;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { previewDrums, stopPreview } from "@/lib/audio/mixer";
 import type { DrumKit, DrumStyle } from "@/lib/types";
 
@@ -25,6 +25,11 @@ export default function DrumStep({ options, beatsPerBar, bpm, onSelect, onSkip }
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [selectedKit, setSelectedKit] = useState<DrumKit>("acoustic-kit");
+
+  // Stop preview audio on unmount
+  useEffect(() => {
+    return () => stopPreview();
+  }, []);
 
   const handlePreview = async (index: number) => {
     if (previewIndex === index) {

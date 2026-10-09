@@ -32,10 +32,6 @@ export function stopPreview() {
   disposeActiveSynths();
 }
 
-function midiToFreq(midi: number): number {
-  return 440 * Math.pow(2, (midi - 69) / 12);
-}
-
 function timeToSeconds(timeStr: string, bpm: number, beatsPerBar = 4): number {
   const [bar, beat, sixteenth] = timeStr.split(":").map(Number);
   const totalBeats = bar * beatsPerBar + beat + sixteenth / 4;
@@ -405,22 +401,27 @@ export async function renderMix(
   const snareBuf = makeBuf(offCtx, bank.snare);
   const hihatBuf = makeBuf(offCtx, bank.hihat);
 
-  // --- Raw voice (no processing) ---
+  // --- Voice (original recording, without destructive time-warping) ---
   if (melodyVoice === "real" && voiceChannels && voiceLength > 0) {
-    // Normalize to peak 0.9
+    // Per-note time stretching used to split and reassemble the recording at
+    // every detected onset. Those hard segment boundaries produced audible
+    // clicks/pops, so keep the captured PCM intact for the real-voice track.
+    const cleanVoiceChannels = voiceChannels;
+
+    // Normalize conservatively, leaving headroom for filters and the mix bus.
     let peak = 0;
-    for (const ch of voiceChannels) {
+    for (const ch of cleanVoiceChannels) {
       for (let i = 0; i < ch.length; i++) {
         const abs = Math.abs(ch[i]);
         if (abs > peak) peak = abs;
       }
     }
-    const normGain = peak > 0.001 ? 0.9 / peak : 1;
+    const normGain = peak > 0.001 ? Math.min(1, 0.85 / peak) : 1;
 
-    const voiceBuf = offCtx.createBuffer(voiceChannels.length, voiceLength, voiceSampleRate);
-    for (let ch = 0; ch < voiceChannels.length; ch++) {
+    const voiceBuf = offCtx.createBuffer(cleanVoiceChannels.length, voiceLength, voiceSampleRate);
+    for (let ch = 0; ch < cleanVoiceChannels.length; ch++) {
       const data = voiceBuf.getChannelData(ch);
-      const src = voiceChannels[ch];
+      const src = cleanVoiceChannels[ch];
       for (let i = 0; i < src.length; i++) {
         data[i] = src[i] * normGain;
       }
@@ -440,22 +441,14 @@ export async function renderMix(
     peaking.gain.value = eq.presence;
 
     const voiceGain = offCtx.createGain();
-    voiceGain.gain.value = 1.3 * vol.melody;
+    voiceGain.gain.value = vol.melody;
     voiceSource.connect(highpass);
     highpass.connect(peaking);
     peaking.connect(voiceGain);
     voiceGain.connect(offCtx.destination);
     voiceGain.connect(convolver);
 
-    // Auto-align: shift entire recording so first detected note lands on its
-    // snapped grid position. No cutting — the whole audio moves as one piece.
-    if (originalNotes && originalNotes.length > 0 && notes.length > 0) {
-      const autoOff = notes[0].startTime - originalNotes[0].startTime;
-      const combined = autoOff + mixOff.voice;
-      voiceSource.start(Math.max(0, combined), Math.max(0, -combined));
-    } else {
-      voiceSource.start(Math.max(0, mixOff.voice));
-    }
+    voiceSource.start(Math.max(0, mixOff.voice));
   }
 
   // --- Piano melody (replaces voice) ---

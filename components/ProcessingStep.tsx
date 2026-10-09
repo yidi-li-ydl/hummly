@@ -65,6 +65,21 @@ export default function ProcessingStep({ readings, onComplete, onError }: Props)
         await delay(400);
         const beatOffset = detectBeatOffset(notes, detectedBpm);
 
+        // Debug: log note onsets, IOIs, and BPM result
+        if (typeof window !== "undefined") {
+          const onsets = notes.map((n) => n.startTime);
+          const iois = onsets.slice(1).map((t, i) => +(t - onsets[i]).toFixed(3));
+          console.group("[Hummly BPM Debug]");
+          console.log("Notes:", notes.length);
+          console.log("Onsets (s):", onsets.map((t) => +t.toFixed(3)));
+          console.log("IOIs (s):", iois);
+          console.log("IOI range:", iois.length > 0 ? `${Math.min(...iois).toFixed(3)}–${Math.max(...iois).toFixed(3)}` : "N/A");
+          console.log("Detected BPM:", detectedBpm, `(beat period: ${(60 / detectedBpm).toFixed(3)}s)`);
+          console.log("Beat offset:", beatOffset.toFixed(3), "s");
+          console.table(notes.map((n) => ({ note: n.name, onset: +n.startTime.toFixed(3), dur: +n.duration.toFixed(3) })));
+          console.groupEnd();
+        }
+
         // Stage 4: Generate chords
         setStage(4);
         await delay(400);
