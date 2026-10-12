@@ -1,0 +1,26 @@
+[
+  {
+    "name": "desktop",
+    "state": "animations",
+    "count": 8,
+    "advances": true,
+    "manualStep": true,
+    "overflow": false
+  },
+  {
+    "name": "desktop",
+    "animationReducedMotion": "static fallback"
+  },
+  {
+    "name": "mobile",
+    "state": "animations",
+    "count": 8,
+    "advances": true,
+    "manualStep": true,
+    "overflow": false
+  },
+  {
+    "name": "mobile",
+    "animationReducedMotion": "static fallback"
+  }
+]

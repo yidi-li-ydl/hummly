@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local asset-processing Python caches
+__pycache__/
+
+# Reproducible Hummi handoff copies (keep README and manifest in Git)
+/exports/hummi-ui-kit.zip
+/exports/hummi-ui-kit/animations/
+/exports/hummi-ui-kit/posters/
+/exports/hummi-ui-kit/sprites/

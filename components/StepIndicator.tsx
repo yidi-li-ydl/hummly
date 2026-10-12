@@ -15,13 +15,13 @@ export default function StepIndicator({ currentStep }: { currentStep: WizardStep
   const currentIndex = STEPS.findIndex((s) => s.key === currentStep);
 
   return (
-    <div className="flex items-center justify-center gap-2 mb-8">
+    <div className="flex items-center justify-center gap-1 sm:gap-2 mb-8">
       {STEPS.map((step, i) => {
         const isActive = i === currentIndex;
         const isDone = i < currentIndex;
 
         return (
-          <div key={step.key} className="flex items-center gap-2">
+          <div key={step.key} className="flex items-center gap-1 sm:gap-2">
             <div className="flex flex-col items-center gap-1">
               <div
                 className={`w-3 h-3 rounded-full transition-all duration-300 ${
@@ -42,7 +42,7 @@ export default function StepIndicator({ currentStep }: { currentStep: WizardStep
             </div>
             {i < STEPS.length - 1 && (
               <div
-                className={`w-8 h-px mb-4 transition-colors ${
+                className={`w-3 sm:w-8 h-px mb-4 transition-colors ${
                   isDone ? "bg-neon-green" : "bg-surface-card"
                 }`}
               />

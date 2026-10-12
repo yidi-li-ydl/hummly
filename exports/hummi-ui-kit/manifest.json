@@ -1,0 +1,90 @@
+[
+  {
+    "state": "curious-listening",
+    "durationSeconds": 3.0,
+    "frameSlots": 96,
+    "spriteColumns": 8,
+    "spriteRows": 12,
+    "animatedWebP": "animations/curious-listening.webp",
+    "spriteAtlas": "sprites/curious-listening.webp",
+    "poster": "posters/curious-listening.png",
+    "sourceAsset": "/mascot/hummi/animations/curious-listening-smooth.webp"
+  },
+  {
+    "state": "unhappy",
+    "durationSeconds": 2.5,
+    "frameSlots": 96,
+    "spriteColumns": 8,
+    "spriteRows": 12,
+    "animatedWebP": "animations/unhappy.webp",
+    "spriteAtlas": "sprites/unhappy.webp",
+    "poster": "posters/unhappy.png",
+    "sourceAsset": "/mascot/hummi/animations/unhappy-smooth.webp"
+  },
+  {
+    "state": "singing",
+    "durationSeconds": 3.5,
+    "frameSlots": 96,
+    "spriteColumns": 8,
+    "spriteRows": 12,
+    "animatedWebP": "animations/singing.webp",
+    "spriteAtlas": "sprites/singing.webp",
+    "poster": "posters/singing.png",
+    "sourceAsset": "/mascot/hummi/animations/singing-smooth.webp"
+  },
+  {
+    "state": "dancing",
+    "durationSeconds": 2.8,
+    "frameSlots": 96,
+    "spriteColumns": 8,
+    "spriteRows": 12,
+    "animatedWebP": "animations/dancing.webp",
+    "spriteAtlas": "sprites/dancing.webp",
+    "poster": "posters/dancing.png",
+    "sourceAsset": "/mascot/hummi/animations/dancing-anatomy-v2.webp"
+  },
+  {
+    "state": "group-dance",
+    "durationSeconds": 3.5,
+    "frameSlots": 96,
+    "spriteColumns": 8,
+    "spriteRows": 12,
+    "animatedWebP": "animations/group-dance.webp",
+    "spriteAtlas": "sprites/group-dance.webp",
+    "poster": "posters/group-dance.png",
+    "sourceAsset": "/mascot/hummi/animations/group-dance-smooth.webp"
+  },
+  {
+    "state": "cool-sunglasses",
+    "durationSeconds": 3.0,
+    "frameSlots": 96,
+    "spriteColumns": 8,
+    "spriteRows": 12,
+    "animatedWebP": "animations/cool-sunglasses.webp",
+    "spriteAtlas": "sprites/cool-sunglasses.webp",
+    "poster": "posters/cool-sunglasses.png",
+    "sourceAsset": "/mascot/hummi/animations/cool-sunglasses-anatomy-v2.webp"
+  },
+  {
+    "state": "headphones",
+    "durationSeconds": 3.0,
+    "frameSlots": 96,
+    "spriteColumns": 8,
+    "spriteRows": 12,
+    "animatedWebP": "animations/headphones.webp",
+    "spriteAtlas": "sprites/headphones.webp",
+    "poster": "posters/headphones.png",
+    "sourceAsset": "/mascot/hummi/animations/headphones-smooth.webp"
+  },
+  {
+    "state": "dj",
+    "durationSeconds": 3.5,
+    "frameSlots": 96,
+    "spriteColumns": 8,
+    "spriteRows": 12,
+    "animatedWebP": "animations/dj.webp",
+    "spriteAtlas": "sprites/dj.webp",
+    "poster": "posters/dj.png",
+    "sourceAsset": "/mascot/hummi/animations/dj-smooth.webp"
+  }
+]

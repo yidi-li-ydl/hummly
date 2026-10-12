@@ -5,6 +5,7 @@ import { renderMix, downloadWav } from "@/lib/audio/mixer";
 import { snapToGrid } from "@/lib/audio/noteQuantizer";
 import type { ChordInstrument, ChordPattern, DrumKit, MelodyVoice, MixOffsets, MixVolumes, QuantizedNote, ChordProgression, DrumStyle, KeyResult, PitchReading, VoiceEQ, VoicePcm } from "@/lib/types";
 import MultiTrackEditor from "./MultiTrackEditor";
+import Hummi from "./Hummi";
 
 interface Props {
   notes: QuantizedNote[];
@@ -304,11 +305,15 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
 
   return (
     <div className="flex flex-col items-center gap-6 py-4">
-      <div className="text-center mb-2">
+      <div className="flex items-center justify-center gap-3 w-full min-w-0 mb-2">
+        <Hummi state="dancing" size="small" animated />
+        <div className="min-w-0">
         <h2 className="text-lg font-semibold gradient-text">Your Demo is Ready!</h2>
+        <p className="text-text-primary text-sm mt-1">That little hum became something.</p>
         <p className="text-text-secondary text-xs mt-1">
           {[chords && `${chords.name} chords`, drums && `${drums.name} drums`].filter(Boolean).join(" + ") || "Voice only"} @ {bpm} BPM
         </p>
+        </div>
       </div>
 
       {/* Multi-track waveform editor */}
@@ -342,7 +347,7 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
               onChange={(e) =>
                 setTrackVolumes((v) => ({ ...v, [key]: parseFloat(e.target.value) }))
               }
-              className="flex-1 h-1.5 accent-neon-purple cursor-pointer"
+              className="flex-1 min-w-0 h-1.5 accent-neon-purple cursor-pointer"
             />
             <button
               onClick={() => setTrackMutes((m) => ({ ...m, [key]: !m[key] }))}

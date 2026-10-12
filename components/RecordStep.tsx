@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import WaveformVisualizer from "./WaveformVisualizer";
+import Hummi from "./Hummi";
 import { createRecorder, type RecorderHandle } from "@/lib/audio/recorder";
 import { startPitchTracking, detectPitchOffline } from "@/lib/audio/pitchDetector";
 import type { PitchReading, VoicePcm } from "@/lib/types";
@@ -31,6 +32,7 @@ export default function RecordStep({ onComplete }: Props) {
   const [elapsed, setElapsed] = useState(0);
   const [currentNote, setCurrentNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [analyserNode, setAnalyserNode] = useState<AnalyserNode | null>(null);
   const recorderRef = useRef<RecorderHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const readingsRef = useRef<PitchReading[]>([]);
@@ -71,6 +73,7 @@ export default function RecordStep({ onComplete }: Props) {
 
       const recorder = await createRecorder();
       recorderRef.current = recorder;
+      setAnalyserNode(recorder.analyserNode);
 
       setPhase("recording");
 
@@ -107,11 +110,14 @@ export default function RecordStep({ onComplete }: Props) {
     const pcm = recorderRef.current.stopRecording();
     recorderRef.current.cleanup();
     recorderRef.current = null;
+    setAnalyserNode(null);
 
     onComplete(pcm, readingsRef.current);
   }, [cleanup, onComplete]);
 
-  stopRecordingRef.current = stopRecording;
+  useEffect(() => {
+    stopRecordingRef.current = stopRecording;
+  }, [stopRecording]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -152,9 +158,20 @@ export default function RecordStep({ onComplete }: Props) {
 
   return (
     <div className="flex flex-col items-center gap-6">
+      {phase === "idle" && (
+        <div className="flex flex-col items-center text-center gap-2 pt-2 pb-1 max-w-sm">
+          <Hummi state="curious-listening" size="large" animated priority />
+          <h2 className="text-xl font-semibold">A little hum. A little magic.</h2>
+          <p className="text-text-secondary text-sm leading-relaxed px-2">
+            I’m Hummi. Start with a melody, however small.<br />
+            We’ll find its chords and rhythm together.
+          </p>
+          <p className="text-text-secondary text-xs mt-1">Every hum deserves to become something.</p>
+        </div>
+      )}
       {phase !== "idle" && (
         <WaveformVisualizer
-          analyserNode={recorderRef.current?.analyserNode ?? null}
+          analyserNode={analyserNode}
           isActive={phase === "recording"}
         />
       )}
@@ -206,6 +223,7 @@ export default function RecordStep({ onComplete }: Props) {
               : undefined
           }
           disabled={phase === "uploading"}
+          aria-label={phase === "recording" ? "Stop recording" : "Record your melody"}
           className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${
             phase === "recording"
               ? "bg-red-500 hover:bg-red-400 animate-recording-pulse"
@@ -227,6 +245,7 @@ export default function RecordStep({ onComplete }: Props) {
         {phase === "idle" && (
           <button
             onClick={() => fileInputRef.current?.click()}
+            aria-label="Upload an audio file"
             className="w-20 h-20 rounded-full flex items-center justify-center transition-all bg-surface-card hover:bg-surface-secondary border border-text-secondary/30"
           >
             <svg className="w-8 h-8 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

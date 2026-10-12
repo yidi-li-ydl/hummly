@@ -1,0 +1,82 @@
+[
+  {
+    "state": "curious-listening",
+    "frames": 96,
+    "keyPoses": 16,
+    "fps": 32.0,
+    "duration": 3,
+    "method": "bidirectional TV-L1 motion interpolation",
+    "width": 2048,
+    "height": 3072
+  },
+  {
+    "state": "unhappy",
+    "frames": 96,
+    "keyPoses": 16,
+    "fps": 38.4,
+    "duration": 2.5,
+    "method": "bidirectional TV-L1 motion interpolation",
+    "width": 2048,
+    "height": 3072
+  },
+  {
+    "state": "singing",
+    "frames": 96,
+    "keyPoses": 16,
+    "fps": 27.43,
+    "duration": 3.5,
+    "method": "bidirectional TV-L1 motion interpolation",
+    "width": 2048,
+    "height": 3072
+  },
+  {
+    "state": "dancing",
+    "frames": 96,
+    "keyPoses": 16,
+    "fps": 34.29,
+    "duration": 2.8,
+    "method": "anatomy-preserving affine tween",
+    "width": 2048,
+    "height": 3072
+  },
+  {
+    "state": "group-dance",
+    "frames": 96,
+    "keyPoses": 16,
+    "fps": 27.43,
+    "duration": 3.5,
+    "method": "bidirectional TV-L1 motion interpolation",
+    "width": 2048,
+    "height": 3072
+  },
+  {
+    "state": "cool-sunglasses",
+    "frames": 96,
+    "keyPoses": 16,
+    "fps": 32.0,
+    "duration": 3,
+    "method": "anatomy-preserving affine tween",
+    "width": 2048,
+    "height": 3072
+  },
+  {
+    "state": "headphones",
+    "frames": 96,
+    "keyPoses": 16,
+    "fps": 32.0,
+    "duration": 3,
+    "method": "bidirectional TV-L1 motion interpolation",
+    "width": 2048,
+    "height": 3072
+  },
+  {
+    "state": "dj",
+    "frames": 96,
+    "keyPoses": 16,
+    "fps": 27.43,
+    "duration": 3.5,
+    "method": "bidirectional TV-L1 motion interpolation",
+    "width": 2048,
+    "height": 3072
+  }
+]
