@@ -1,0 +1,47 @@
+[
+  {
+    "state": "dancing",
+    "comparison": {
+      "anatomy-v2": {
+        "maximumFrameChange": 0.09741415828466415,
+        "meanFrameChange": 0.016149452231426647
+      },
+      "rig-v3": {
+        "maximumFrameChange": 0.012100547552108765,
+        "meanFrameChange": 0.006903604193212232,
+        "all96FramesConnected": true,
+        "loopAlphaMatches": true
+      }
+    }
+  },
+  {
+    "state": "cool-sunglasses",
+    "comparison": {
+      "anatomy-v2": {
+        "maximumFrameChange": 0.07745316624641418,
+        "meanFrameChange": 0.009060643546642192
+      },
+      "rig-v3": {
+        "maximumFrameChange": 0.00790807232260704,
+        "meanFrameChange": 0.003946319170305894,
+        "all96FramesConnected": true,
+        "loopAlphaMatches": true
+      }
+    }
+  },
+  {
+    "state": "unhappy",
+    "comparison": {
+      "smooth": {
+        "maximumFrameChange": 0.04754919931292534,
+        "meanFrameChange": 0.008160033328749705
+      },
+      "rig-v3": {
+        "maximumFrameChange": 0.0030832134652882814,
+        "meanFrameChange": 0.0024667685199043867,
+        "all96FramesConnected": true,
+        "loopAlphaMatches": true
+      }
+    }
+  }
+]

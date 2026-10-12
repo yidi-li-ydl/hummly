@@ -19,7 +19,7 @@
     "animatedWebP": "animations/unhappy.webp",
     "spriteAtlas": "sprites/unhappy.webp",
     "poster": "posters/unhappy.png",
-    "sourceAsset": "/mascot/hummi/animations/unhappy-smooth.webp"
+    "sourceAsset": "/mascot/hummi/animations/unhappy-rig-v3.webp"
   },
   {
     "state": "singing",
@@ -41,7 +41,7 @@
     "animatedWebP": "animations/dancing.webp",
     "spriteAtlas": "sprites/dancing.webp",
     "poster": "posters/dancing.png",
-    "sourceAsset": "/mascot/hummi/animations/dancing-anatomy-v2.webp"
+    "sourceAsset": "/mascot/hummi/animations/dancing-rig-v3.webp"
   },
   {
     "state": "group-dance",
@@ -63,7 +63,7 @@
     "animatedWebP": "animations/cool-sunglasses.webp",
     "spriteAtlas": "sprites/cool-sunglasses.webp",
     "poster": "posters/cool-sunglasses.png",
-    "sourceAsset": "/mascot/hummi/animations/cool-sunglasses-anatomy-v2.webp"
+    "sourceAsset": "/mascot/hummi/animations/cool-sunglasses-rig-v4.webp"
   },
   {
     "state": "headphones",

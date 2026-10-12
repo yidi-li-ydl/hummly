@@ -1,7 +1,7 @@
 # Hummi UI/UX asset kit
 
-Eight current, transparent mascot animations. This handoff includes the repaired
-Solo Dance and Cool Sunglasses versions, with older faulty exports excluded.
+Eight current, transparent mascot animations. This handoff includes the v3
+Solo Dance and Unhappy fixes plus the v4 Cool Sunglasses revision, with older exports excluded.
 
 - `animations/`: playable, looping animated WebP files.
 - `posters/`: transparent 384px PNG stills for static design compositions.
@@ -19,10 +19,13 @@ Preserve apricot plush material, cream face/belly, bead eyes and pink cheeks.
 Leave room around the character; respect Reduce Motion; avoid multiple large
 characters on a production screen. The gallery is an asset review exception.
 
-These are working app animation assets. Most use motion interpolation from
-16 key poses. Dance and Sunglasses use a conservative affine tween to preserve
-two-arm anatomy; their limb poses may appear more stepped. Minor variation
-remains between generated drawings. They are not rigged 3D or Lottie assets.
+These are working app animation assets. Five use motion interpolation from
+16 key poses. Dance uses a continuous 2D part rig. Sunglasses preserves the complete
+reference pose, including its crossed arms and feet, with a gentle groove;
+it does not perform the earlier lowering-shades gesture. Unhappy keeps the note and body
+in one connected bitmap throughout its breathing motion. Layer PNGs and rig
+posters are retained in `artifacts/hummi/rig-parts/`, and the generating script
+is `scripts/rig-hummi.py`. These are not 3D model or Lottie files.
 
 High-quality cleaned keyframe PNG sheets remain in the project at
 `artifacts/hummi/animation-sources/`. The reusable renderer is

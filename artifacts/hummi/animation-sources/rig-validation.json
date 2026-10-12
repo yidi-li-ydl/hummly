@@ -1,0 +1,32 @@
+[
+  {
+    "state": "dancing",
+    "frames": 96,
+    "duration": 2.8,
+    "method": "continuous 2D part rig",
+    "loopMatched": true,
+    "armLayers": 2,
+    "maxConnectedComponents": 1,
+    "disconnectedFrames": []
+  },
+  {
+    "state": "unhappy",
+    "frames": 96,
+    "duration": 2.5,
+    "method": "continuous 2D part rig",
+    "loopMatched": true,
+    "armLayers": null,
+    "maxConnectedComponents": 1,
+    "disconnectedFrames": []
+  },
+  {
+    "state": "cool-sunglasses",
+    "frames": 96,
+    "duration": 3,
+    "method": "connected reference gentle groove",
+    "loopMatched": true,
+    "armLayers": null,
+    "maxConnectedComponents": 1,
+    "disconnectedFrames": []
+  }
+]

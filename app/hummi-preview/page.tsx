@@ -12,7 +12,7 @@ const poses: { state: HummiState; name: string; motion: string }[] = [
   { state: "singing", name: "Singing", motion: "Breathe in → sing → smile · 3.5s" },
   { state: "dancing", name: "Solo Dance", motion: "Step → hop → kick · 2.8s" },
   { state: "group-dance", name: "Four-Note Group Dance", motion: "Wave → crouch → jump together · 3.5s" },
-  { state: "cool-sunglasses", name: "Cool Sunglasses", motion: "Tap → lower shades → side-eye · 3s" },
+  { state: "cool-sunglasses", name: "Cool Sunglasses", motion: "Folded arms → gentle groove · 3s" },
   { state: "headphones", name: "Headphone Listening", motion: "Sway → bounce your shoulders · 3s" },
   { state: "dj", name: "DJ Performance", motion: "Scratch → turn → hands up → drop · 3.5s" },
 ];

@@ -1,5 +1,29 @@
 # Hummi frame animations
 
+## v3: continuous rigs and connected note
+
+The earlier 96-slot Dance/Sunglasses version still switched limb key drawings,
+which looked stepped. `scripts/rig-hummi.py` now renders 96 continuously varying
+poses from isolated PNG parts: torso+note, exactly two arms, feet, and shades.
+No nearest-key selection or optical-flow topology changes occur in these loops.
+Solo Dance uses an uncluttered closed-eye smile; glasses keeps the side glance.
+The same reference pose was edited with ImageGen into limb-free torso components;
+local cleanup/part compositing is authorized by the user. Sources are retained
+in `artifacts/hummi/rig-components/` and `artifacts/hummi/rig-parts/`.
+
+Unhappy uses one physically connected character bitmap for continuous inhale,
+rise and exhale, keeping its stem and both flags attached. All 96 decoded WebP
+frames in all three v3 loops were checked for disconnected major components;
+each had one connected component and identical first/last alpha. Timing remains
+unchanged at 2.8s / 3s / 2.5s. Frame-difference measurements and junction detail
+review are in `animation-sources/rig-decoded-verification.json` and
+`animation-sources/unhappy-junction-review.png`.
+
+Current files: `dancing-rig-v3.webp`, `cool-sunglasses-rig-v3.webp`,
+`unhappy-rig-v3.webp` and their matching `-loop.webp` downloads. The exported
+asset kit and its poster images now use these versions as well. The older
+versions below are kept for reference and reproduction, not active playback.
+
 ## Smooth version
 
 ## Anatomy repair
@@ -75,3 +99,10 @@ This is a usable first frame-animation version, not a polished 24fps production
 character rig. Minor pose/texture variation remains between AI-generated frames;
 fine pupil direction, precise flag lag, and DJ scratching can be refined later.
 No frame interpolation or crossfading is presented as new animation frames.
+
+## Cool Sunglasses v4
+
+Replaced reconstructed hands, forearms and duplicated feet with the intact
+reference pose. All 96 frames preserve the original crossed arms and feet,
+using only a restrained whole-character groove. The lowering-shades gesture
+is withdrawn from this version; gallery copy and the export kit match this.
