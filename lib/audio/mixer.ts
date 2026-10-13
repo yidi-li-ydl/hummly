@@ -10,12 +10,57 @@ import { loadSampleBank, findNearestPianoSample, type SampleBank, type DecodedSa
 let activeSynths: Tone.ToneAudioNode[] = [];
 let cleanupTimers: ReturnType<typeof setTimeout>[] = [];
 let activeSourceNodes: AudioBufferSourceNode[] = [];
+let previewVersion = 0;
+let previewBus: GainNode | null = null;
+let previewClock: ReturnType<typeof setInterval> | null = null;
+let previewEnded: ((reason: "ended" | "stopped") => void) | null = null;
+
+export interface PreviewObserver {
+  onStart?: () => void;
+  onStep?: (index: number | null) => void;
+  onEnd?: (reason: "ended" | "stopped") => void;
+}
+
+function beginPreview() {
+  stopPreview();
+  return previewVersion;
+}
+
+function createPreviewBus(ctx: AudioContext) {
+  const bus = ctx.createGain();
+  bus.connect(ctx.destination);
+  previewBus = bus;
+  return bus;
+}
+
+/** Visual feedback follows the same AudioContext clock as the scheduled sounds. */
+function observePreview(ctx: AudioContext, start: number, stepDuration: number, steps: number, tail: number, version: number, observer?: PreviewObserver) {
+  let started = false;
+  let lastStep: number | null = null;
+  previewEnded = observer?.onEnd ?? null;
+  const tick = () => {
+    if (version !== previewVersion) return;
+    const elapsed = ctx.currentTime - start;
+    if (elapsed < 0) return;
+    if (!started) { started = true; observer?.onStart?.(); }
+    const step = Math.floor(elapsed / stepDuration);
+    const index = step < steps ? step : null;
+    if (index !== lastStep) { lastStep = index; observer?.onStep?.(index); }
+    if (elapsed >= stepDuration * steps + tail) disposeActiveSynths("ended");
+  };
+  previewClock = setInterval(tick, 25);
+  tick();
+}
 
 export async function ensureToneStarted() {
   await Tone.start();
 }
 
-function disposeActiveSynths() {
+function disposeActiveSynths(reason: "ended" | "stopped" = "stopped") {
+  if (previewClock) { clearInterval(previewClock); previewClock = null; }
+  if (previewBus) { previewBus.gain.value = 0; previewBus.disconnect(); previewBus = null; }
+  const ended = previewEnded;
+  previewEnded = null;
   cleanupTimers.forEach(clearTimeout);
   cleanupTimers = [];
   activeSynths.forEach((s) => {
@@ -26,9 +71,11 @@ function disposeActiveSynths() {
     try { s.stop(); s.disconnect(); } catch { /* */ }
   });
   activeSourceNodes = [];
+  ended?.(reason);
 }
 
 export function stopPreview() {
+  previewVersion++;
   disposeActiveSynths();
 }
 
@@ -154,10 +201,11 @@ function playSample(
 
 export async function previewMelody(notes: QuantizedNote[]): Promise<void> {
   if (notes.length === 0) return;
+  const version = beginPreview();
   await ensureToneStarted();
-  disposeActiveSynths();
-
+  if (version !== previewVersion) return;
   const bank = await loadSampleBank();
+  if (version !== previewVersion) return;
   const ctx = Tone.getContext().rawContext as AudioContext;
 
   // Create piano buffers in current context
@@ -200,13 +248,17 @@ export async function previewChords(
   instrument: ChordInstrument = "piano",
   bpm = 100,
   beatsPerBar = 4,
-  chordPattern?: ChordPattern
+  chordPattern?: ChordPattern,
+  observer?: PreviewObserver
 ): Promise<void> {
+  if (!progression.chords.length) return;
+  const version = beginPreview();
   await ensureToneStarted();
-  disposeActiveSynths();
+  if (version !== previewVersion) return;
 
   const ctx = Tone.getContext().rawContext as AudioContext;
-  const now = ctx.currentTime + 0.1;
+  let now: number;
+  let bus: GainNode;
   const beatDuration = 60 / bpm;
   const barDuration = beatsPerBar * beatDuration;
 
@@ -216,6 +268,9 @@ export async function previewChords(
 
   if (instrument === "piano") {
     const bank = await loadSampleBank();
+    if (version !== previewVersion) return;
+    bus = createPreviewBus(ctx);
+    now = ctx.currentTime + 0.1;
     const pianoBuffers = new Map<number, AudioBuffer>();
     for (const s of bank.piano) pianoBuffers.set(s.midiNote, makeBuf(ctx, s));
 
@@ -242,7 +297,7 @@ export async function previewChords(
           gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
 
           source.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(bus);
           source.start(t);
           source.stop(t + dur + 1);
           activeSourceNodes.push(source);
@@ -250,6 +305,8 @@ export async function previewChords(
       }
     });
   } else {
+    bus = createPreviewBus(ctx);
+    now = ctx.currentTime + 0.1;
     const playFn =
       instrument === "guitar" ? playGuitarChord :
       instrument === "strings" ? playStringsChord :
@@ -263,23 +320,33 @@ export async function previewChords(
         const hitNotes = hit.tones.map((idx) =>
           idx < chord.notes.length ? chord.notes[idx] : chord.notes[idx % chord.notes.length] + 12
         );
-        playFn(ctx, hitNotes, t, dur, ctx.destination, ctx.destination, 0.3 * hit.velocity);
+        playFn(ctx, hitNotes, t, dur, bus, bus, 0.3 * hit.velocity);
       }
     });
   }
 
-  const totalMs = progression.chords.length * barDuration * 1000 + 1500;
-  const timer = setTimeout(() => disposeActiveSynths(), totalMs);
-  cleanupTimers.push(timer);
+  observePreview(ctx, now!, barDuration, progression.chords.length, 1.5, version, observer);
 }
 
-export async function previewDrums(style: DrumStyle, drumKit: DrumKit = "acoustic-kit", bpmOverride?: number): Promise<void> {
+export async function previewChord(
+  chord: ChordProgression["chords"][number],
+  instrument: ChordInstrument = "piano",
+  bpm = 100,
+  observer?: PreviewObserver
+): Promise<void> {
+  return previewChords({ name: chord.name, description: "Chord audition", chords: [chord] }, instrument, bpm, 1, undefined, observer);
+}
+
+export async function previewDrums(style: DrumStyle, drumKit: DrumKit = "acoustic-kit", bpmOverride?: number, observer?: PreviewObserver): Promise<void> {
+  const version = beginPreview();
   await ensureToneStarted();
-  disposeActiveSynths();
+  if (version !== previewVersion) return;
 
   const bank = await loadSampleBank(drumKit);
+  if (version !== previewVersion) return;
   const ctx = Tone.getContext().rawContext as AudioContext;
 
+  const bus = createPreviewBus(ctx);
   const kickBuf = makeBuf(ctx, bank.kick);
   const snareBuf = makeBuf(ctx, bank.snare);
   const hihatBuf = makeBuf(ctx, bank.hihat);
@@ -295,7 +362,7 @@ export async function previewDrums(style: DrumStyle, drumKit: DrumKit = "acousti
     const g = ctx.createGain();
     g.gain.value = 0.8;
     s.connect(g);
-    g.connect(ctx.destination);
+    g.connect(bus);
     s.start(t);
     activeSourceNodes.push(s);
   });
@@ -306,7 +373,7 @@ export async function previewDrums(style: DrumStyle, drumKit: DrumKit = "acousti
     const g = ctx.createGain();
     g.gain.value = 0.7;
     s.connect(g);
-    g.connect(ctx.destination);
+    g.connect(bus);
     s.start(t);
     activeSourceNodes.push(s);
   });
@@ -317,14 +384,12 @@ export async function previewDrums(style: DrumStyle, drumKit: DrumKit = "acousti
     const g = ctx.createGain();
     g.gain.value = 0.5;
     s.connect(g);
-    g.connect(ctx.destination);
+    g.connect(bus);
     s.start(t);
     activeSourceNodes.push(s);
   });
 
-  const barDuration = (bpb * 60) / bpm;
-  const timer = setTimeout(() => disposeActiveSynths(), barDuration * 2 * 1000 + 1000);
-  cleanupTimers.push(timer);
+  observePreview(ctx, now, (60 / bpm) / 4, bpb * 4 * 2, 1, version, observer);
 }
 
 // ---------------------------------------------------------------------------

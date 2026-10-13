@@ -140,7 +140,7 @@ export default function AlignTimeline({
 
       <div
         ref={containerRef}
-        className="relative bg-surface-card rounded-lg border border-white/5 p-3 pt-6"
+        className="relative pt-6"
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
@@ -153,10 +153,10 @@ export default function AlignTimeline({
               className="absolute top-0 flex flex-col items-center -translate-x-1/2"
               style={{ left: `${tick.pct}%` }}
             >
-              <span className="text-[9px] text-text-secondary/60 font-mono">
+              <span className="text-xs text-text-muted font-mono">
                 {tick.label}
               </span>
-              <div className="w-px h-1.5 bg-white/10 mt-0.5" />
+              <div className="w-px h-1.5 bg-ink/15 mt-0.5" />
             </div>
           ))}
         </div>
@@ -165,13 +165,13 @@ export default function AlignTimeline({
         <div className="flex flex-col gap-2">
           {/* Voice track */}
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-medium w-10 text-right shrink-0 text-neon-purple">
+            <span className="text-xs font-medium w-10 text-right shrink-0 text-ink">
               Voice
             </span>
-            <div className="relative flex-1 h-8 rounded bg-white/5">
+            <div className="relative flex-1 h-8 rounded bg-ink/5">
               <div
                 onPointerDown={(e) => onPointerDown("voice", e)}
-                className={`absolute top-0.5 bottom-0.5 rounded border bg-neon-purple/30 border-neon-purple ${
+                className={`absolute top-0.5 bottom-0.5 rounded border bg-ink/30 border-ink ${
                   disabled
                     ? "cursor-default opacity-50"
                     : dragging === "voice"
@@ -184,7 +184,7 @@ export default function AlignTimeline({
                   minWidth: "12px",
                 }}
               >
-                <span className="text-[8px] font-mono text-white/50 pointer-events-none truncate px-1">
+                <span className="text-xs font-mono text-ink/80 pointer-events-none truncate px-1">
                   {voiceDuration.toFixed(1)}s
                 </span>
               </div>
@@ -193,13 +193,13 @@ export default function AlignTimeline({
 
           {/* Beats track */}
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-medium w-10 text-right shrink-0 text-neon-cyan">
+            <span className="text-xs font-medium w-10 text-right shrink-0 text-ink">
               Beats
             </span>
-            <div className="relative flex-1 h-8 rounded bg-white/5">
+            <div className="relative flex-1 h-8 rounded bg-ink/5">
               <div
                 onPointerDown={(e) => onPointerDown("beats", e)}
-                className={`absolute top-0.5 bottom-0.5 rounded border bg-neon-cyan/15 border-neon-cyan/50 ${
+                className={`absolute top-0.5 bottom-0.5 rounded border bg-ink/15 border-ink/50 ${
                   disabled
                     ? "cursor-default opacity-50"
                     : dragging === "beats"
@@ -218,8 +218,8 @@ export default function AlignTimeline({
                     key={i}
                     className={`absolute top-0 ${
                       tick.isDownbeat
-                        ? "h-full w-0.5 bg-neon-cyan"
-                        : "h-1/2 w-px bg-neon-cyan/50 mt-auto"
+                        ? "h-full w-0.5 bg-ink"
+                        : "h-1/2 w-px bg-ink/50 mt-auto"
                     }`}
                     style={{ left: `${tick.pct}%` }}
                   />
@@ -230,9 +230,9 @@ export default function AlignTimeline({
         </div>
 
         {/* Offset display */}
-        <p className="text-center mt-3 text-[10px] tabular-nums text-text-secondary/60">
+        <p className="text-center mt-3 text-xs tabular-nums text-text-muted">
           offset{" "}
-          <span className="text-neon-cyan font-mono">
+          <span className="text-ink font-mono">
             {beatOffset === 0 ? "0" : (beatOffset > 0 ? "+" : "") + beatOffset.toFixed(2)}s
           </span>
         </p>

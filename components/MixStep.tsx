@@ -6,6 +6,10 @@ import { snapToGrid } from "@/lib/audio/noteQuantizer";
 import type { ChordInstrument, ChordPattern, DrumKit, MelodyVoice, MixOffsets, MixVolumes, QuantizedNote, ChordProgression, DrumStyle, KeyResult, PitchReading, VoiceEQ, VoicePcm } from "@/lib/types";
 import MultiTrackEditor from "./MultiTrackEditor";
 import Hummi from "./Hummi";
+import Icon from "./Icon";
+import ActionButton from "./ui/ActionButton";
+import SecondaryButton from "./ui/SecondaryButton";
+import Surface from "./ui/Surface";
 
 interface Props {
   notes: QuantizedNote[];
@@ -50,6 +54,14 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
   const [status, setStatus] = useState<"rendering" | "ready" | "error">("rendering");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [celebrating, setCelebrating] = useState(true);
+  useEffect(() => {
+    if (status !== "ready") return;
+    const timer = setTimeout(() => setCelebrating(false), 3500);
+    return () => clearTimeout(timer);
+  }, [status]);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const hasRendered = useRef(false);
   const [editedPcm, setEditedPcm] = useState<VoicePcm | null>(null);
   const effectivePcm = editedPcm ?? voicePcm;
@@ -252,6 +264,10 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
   };
 
   const handleDownload = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setExportError(null);
+    try {
     const common = [
       snappedNotes, chords ?? undefined, chordsB ?? undefined, drums ?? undefined, undefined, bpm,
       (editedPcm ?? voicePcm) ?? undefined, pitchReadings, detectedKey,
@@ -269,13 +285,19 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
     const { url } = await renderMix(...common, vol, ...tail);
     downloadWav(url);
     URL.revokeObjectURL(url);
+    } catch {
+      setExportError("Your demo is still here. We couldn’t export it this time—try downloading again.");
+    } finally {
+      setExporting(false);
+    }
   };
 
   if (status === "rendering") {
     return (
       <div className="flex flex-col items-center gap-6 py-8">
-        <div className="w-16 h-16 rounded-full border-4 border-neon-cyan border-t-transparent animate-spin" />
-        <p className="text-text-secondary text-sm">Rendering your demo...</p>
+        <Icon name="wave" className="w-14 h-14 text-ink" />
+        <h1 className="demo-title">Bringing it all together.</h1>
+        <p className="text-text-secondary text-sm" role="status">Preparing the sounds and rendering your demo…</p>
       </div>
     );
   }
@@ -283,47 +305,77 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
   if (status === "error") {
     return (
       <div className="flex flex-col items-center gap-6 py-8">
-        <p className="text-red-400 text-sm">Rendering failed. Please try again.</p>
+        <h1 className="demo-title">Let’s try that mix again.</h1>
+        <p className="text-text-secondary text-sm">Your melody and choices are still here.</p>
+        <ActionButton onClick={async () => {
+          setStatus("rendering");
+          try {
+            const tracks = await renderThreeTracks(effectivePcm ?? undefined, mixOffsets);
+            setVoiceBuffer(tracks.voiceBuf);
+            if (!editedChordsPcm) setChordsBuffer(tracks.chordsBuf);
+            if (!editedDrumsPcm) setDrumsBuffer(tracks.drumsBuf);
+            setErrorMsg(null);
+            setStatus("ready");
+          } catch (err) { setErrorMsg(err instanceof Error ? err.message : String(err)); setStatus("error"); }
+        }}>Retry rendering</ActionButton>
         {errorMsg && (
-          <p className="text-red-400/70 text-xs font-mono max-w-md break-all">{errorMsg}</p>
+          <details className="text-xs max-w-md break-all"><summary>Error details</summary><p>{errorMsg}</p></details>
         )}
-        <button
+        <SecondaryButton
           onClick={onStartOver}
-          className="px-6 py-2 rounded-lg bg-surface-card hover:bg-surface-secondary text-sm transition-colors"
         >
           Start Over
-        </button>
+        </SecondaryButton>
       </div>
     );
   }
 
   const mixerTracks = [
-    { key: "voice" as const, label: "Voice", icon: "\u{1F3A4}" },
-    { key: "chords" as const, label: "Chords", icon: "\u{1F3B9}" },
-    { key: "drums" as const, label: "Drums", icon: "\u{1F941}" },
+    { key: "voice" as const, label: "Your hum", icon: "mic" as const },
+    { key: "chords" as const, label: "Chords", icon: "note" as const },
+    { key: "drums" as const, label: "Beat", icon: "beat" as const },
   ];
 
   return (
     <div className="flex flex-col items-center gap-6 py-4">
       <div className="flex items-center justify-center gap-3 w-full min-w-0 mb-2">
-        <Hummi state="dancing" size="small" animated />
+        <Hummi state="dancing" size="small" animated={celebrating} />
         <div className="min-w-0">
-        <h2 className="text-lg font-semibold gradient-text">Your Demo is Ready!</h2>
-        <p className="text-text-primary text-sm mt-1">That little hum became something.</p>
+        <h1 className="demo-title">Your demo is ready.</h1>
+        <p className="demo-description mt-1">That little hum became something.</p>
         <p className="text-text-secondary text-xs mt-1">
           {[chords && `${chords.name} chords`, drums && `${drums.name} drums`].filter(Boolean).join(" + ") || "Voice only"} @ {bpm} BPM
         </p>
         </div>
       </div>
 
+      {/* Play button */}
+      <button
+        onClick={togglePlay}
+        aria-label={isPlaying ? "Pause demo" : "Play demo"}
+        className={`demo-transport ${isPlaying ? "is-playing" : ""}`}
+      >
+        {isPlaying ? (
+          <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24">
+            <rect x="6" y="4" width="4" height="16" rx="1" />
+            <rect x="14" y="4" width="4" height="16" rx="1" />
+          </svg>
+        ) : (
+          <svg className="w-10 h-10 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        )}
+      </button>
+
       {/* Multi-track waveform editor */}
+      <details className="precision-details"><summary>Fine-tune audio</summary><Surface>
       {effectivePcm && chordsPcm && drumsPcm && (
         <MultiTrackEditor
           tracks={[
-            { id: "voice", label: "Voice", icon: "\u{1F3A4}", pcm: effectivePcm, onPcmChange: handlePcmChange },
-            { id: "chords", label: "Chords", icon: "\u{1F3B9}", pcm: chordsPcm,
+            { id: "voice", label: "Your hum", icon: <Icon name="mic" className="w-4 h-4 shrink-0" />, pcm: effectivePcm, onPcmChange: handlePcmChange },
+            { id: "chords", label: "Chords", icon: <Icon name="note" className="w-4 h-4 shrink-0" />, pcm: chordsPcm,
               onPcmChange: (pcm) => { stopPlayback(); setEditedChordsPcm(pcm); setChordsBuffer(voicePcmToAudioBuffer(pcm)); }},
-            { id: "drums", label: "Drums", icon: "\u{1F941}", pcm: drumsPcm,
+            { id: "drums", label: "Beat", icon: <Icon name="beat" className="w-4 h-4 shrink-0" />, pcm: drumsPcm,
               onPcmChange: (pcm) => { stopPlayback(); setEditedDrumsPcm(pcm); setDrumsBuffer(voicePcmToAudioBuffer(pcm)); }},
           ]}
           bpm={bpm}
@@ -332,14 +384,16 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
           currentTime={playheadTime}
         />
       )}
+      </Surface></details>
 
       {/* Track mixer */}
-      <div className="w-full max-w-md flex flex-col gap-2 px-4 py-3 rounded-lg bg-surface-card border border-surface-card">
+      <div className="track-mixer">
         {mixerTracks.map(({ key, label, icon }) => (
           <div key={key} className="flex items-center gap-3">
-            <span className="text-sm w-20 shrink-0">{icon} {label}</span>
+            <span className="text-xs w-24 shrink-0 flex items-center gap-2"><Icon name={icon} className="w-4 h-4" /> {label}</span>
             <input
               type="range"
+              aria-label={`${label} volume`}
               min={0}
               max={1}
               step={0.01}
@@ -347,15 +401,13 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
               onChange={(e) =>
                 setTrackVolumes((v) => ({ ...v, [key]: parseFloat(e.target.value) }))
               }
-              className="flex-1 min-w-0 h-1.5 accent-neon-purple cursor-pointer"
+              className="mix-level flex-1 min-w-0"
             />
-            <button
+            <SecondaryButton className="icon-action"
+              aria-label={`${trackMutes[key] ? "Unmute" : "Mute"} ${label}`}
+              aria-pressed={trackMutes[key]}
               onClick={() => setTrackMutes((m) => ({ ...m, [key]: !m[key] }))}
-              className={`w-8 h-8 flex items-center justify-center rounded text-xs transition-colors ${
-                trackMutes[key]
-                  ? "bg-red-500/20 text-red-400"
-                  : "bg-surface-secondary text-text-secondary hover:text-text-primary"
-              }`}
+
               title={trackMutes[key] ? "Unmute" : "Mute"}
             >
               {trackMutes[key] ? (
@@ -367,52 +419,33 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
                 </svg>
               )}
-            </button>
+            </SecondaryButton>
           </div>
         ))}
       </div>
 
-      {/* Play button */}
-      <button
-        onClick={togglePlay}
-        className={`w-24 h-24 rounded-full flex items-center justify-center transition-all ${
-          isPlaying
-            ? "bg-neon-cyan animate-pulse-neon"
-            : "bg-neon-purple hover:bg-neon-purple/80 animate-pulse-neon"
-        }`}
-      >
-        {isPlaying ? (
-          <svg className="w-10 h-10 text-black" fill="currentColor" viewBox="0 0 24 24">
-            <rect x="6" y="4" width="4" height="16" rx="1" />
-            <rect x="14" y="4" width="4" height="16" rx="1" />
-          </svg>
-        ) : (
-          <svg className="w-10 h-10 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M8 5v14l11-7z" />
-          </svg>
-        )}
-      </button>
 
-      <div className="flex gap-3 mt-2">
-        <button
+      <div className="flex flex-wrap justify-center gap-3 mt-2">
+        <ActionButton
           onClick={handleDownload}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-neon-green/20 hover:bg-neon-green/30 text-neon-green text-sm font-medium transition-colors"
+          disabled={exporting}
+          className="export-cta"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
-          Download WAV
-        </button>
-        <button
+          {exporting ? "Preparing WAV…" : "Download WAV"}
+        </ActionButton>
+        <SecondaryButton
           onClick={onStartOver}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-surface-card hover:bg-surface-secondary text-text-secondary hover:text-text-primary text-sm transition-colors"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
           Start Over
-        </button>
+        </SecondaryButton>
       </div>
+      {exportError && <p className="recovery-message" role="alert">{exportError}</p>}
     </div>
   );
 }

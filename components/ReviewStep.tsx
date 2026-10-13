@@ -2,6 +2,11 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import AlignTimeline from "./AlignTimeline";
+import Icon from "./Icon";
+import ActionButton from "./ui/ActionButton";
+import SecondaryButton from "./ui/SecondaryButton";
+import SelectionGroup from "./ui/SelectionGroup";
+import Surface from "./ui/Surface";
 import type { KeyResult, VoicePcm } from "@/lib/types";
 
 interface Props {
@@ -57,13 +62,6 @@ export default function ReviewStep({
     setIsPlaying(false);
     setCurrentBeat(0);
   }, []);
-
-  // Stop playback when BPM or beatsPerBar changes (but NOT beatOffset —
-  // beatOffset is read live via ref so the click track updates in real time)
-  useEffect(() => {
-    if (isPlaying) stopPlayback();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bpm, beatsPerBar]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -174,124 +172,40 @@ export default function ReviewStep({
     : 0;
 
   return (
-    <div className="flex flex-col items-center gap-8 py-4">
-      <h2 className="text-lg font-semibold gradient-text">Analysis Complete</h2>
-
-      {/* Detected Key */}
-      <div className="flex flex-col items-center gap-2">
-        <p className="text-text-secondary text-xs uppercase tracking-wider">Key</p>
-        <span className="text-3xl font-bold text-neon-cyan">
-          {detectedKey.key} {detectedKey.mode}
-        </span>
-      </div>
-
-      {/* Detected BPM */}
-      <div className="flex flex-col items-center gap-3">
-        <p className="text-text-secondary text-xs uppercase tracking-wider">Tempo</p>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => onBpmChange(Math.max(40, bpm - 1))}
-            className="w-10 h-10 rounded-full bg-surface-card hover:bg-surface-secondary flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors text-lg font-bold"
-          >
-            -
-          </button>
-          <input
-            type="text"
-            inputMode="numeric"
-            value={bpmFocused ? bpmDraft : String(bpm)}
-            onFocus={(e) => { setBpmDraft(String(bpm)); setBpmFocused(true); e.target.select(); }}
-            onChange={(e) => setBpmDraft(e.target.value.replace(/[^0-9]/g, ""))}
-            onBlur={() => {
-              setBpmFocused(false);
-              const v = parseInt(bpmDraft, 10);
-              if (!isNaN(v)) onBpmChange(Math.max(40, Math.min(200, v)));
-            }}
-            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-            className="text-3xl font-bold text-neon-purple tabular-nums w-24 text-center bg-transparent border-b-2 border-neon-purple/30 focus:border-neon-purple outline-none transition-colors"
-          />
-          <button
-            onClick={() => onBpmChange(Math.min(200, bpm + 1))}
-            className="w-10 h-10 rounded-full bg-surface-card hover:bg-surface-secondary flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors text-lg font-bold"
-          >
-            +
-          </button>
-        </div>
-        <p className="text-text-secondary text-xs">BPM</p>
-      </div>
-
-      {/* Preview: voice + click track */}
-      {voicePcm && (
-        <div className="flex flex-col items-center gap-3">
-          <button
-            onClick={togglePlayback}
-            className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
-              isPlaying
-                ? "bg-red-500 hover:bg-red-400"
-                : "bg-neon-purple hover:bg-neon-purple/80"
-            }`}
-          >
-            {isPlaying ? (
-              <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
-                <rect x="6" y="4" width="4" height="16" rx="1" />
-                <rect x="14" y="4" width="4" height="16" rx="1" />
-              </svg>
-            ) : (
-              <svg className="w-6 h-6 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            )}
-          </button>
-
-          {/* Beat dots */}
-          {isPlaying && (
-            <div className="flex items-center gap-2">
-              {Array.from({ length: beatsPerBar }, (_, i) => {
-                const beatNum = i + 1;
-                const isActive = currentBeat === beatNum;
-                const isDownbeat = beatNum === 1;
-                return (
-                  <div
-                    key={i}
-                    className={`rounded-full transition-all duration-75 ${
-                      isActive
-                        ? isDownbeat
-                          ? "w-4 h-4 bg-neon-cyan shadow-[0_0_10px_rgba(34,211,238,0.7)]"
-                          : "w-3.5 h-3.5 bg-neon-purple shadow-[0_0_8px_rgba(168,85,247,0.6)]"
-                        : "w-2.5 h-2.5 bg-surface-card border border-text-secondary/30"
-                    }`}
-                  />
-                );
-              })}
-            </div>
-          )}
-
-          <p className="text-text-secondary text-xs">
-            {isPlaying ? "Listening... adjust BPM or click offset until the clicks match" : "Play to hear your recording with click track"}
-          </p>
-        </div>
-      )}
-
-      {/* Beat offset alignment — below playback so user plays first, then adjusts */}
-      {voicePcm && (
-        <AlignTimeline
-          voiceDuration={voiceDuration}
-          bpm={bpm}
-          beatsPerBar={beatsPerBar}
-          beatOffset={beatOffset}
-          onChange={onBeatOffsetChange}
-        />
-      )}
-
-      {/* Continue button */}
-      <button
-        onClick={() => { stopPlayback(); onContinue(); }}
-        className="mt-2 px-8 py-3 rounded-xl bg-neon-purple hover:bg-neon-purple/80 text-white font-medium transition-colors flex items-center gap-2"
-      >
-        Continue
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
-      </button>
+    <div className="flex flex-col items-center gap-6">
+      <div className="text-center"><p className="field-label">Detected key</p><p className="music-data">{detectedKey.key} {detectedKey.mode}</p></div>
+      <p className="phase-hint">{bpm} BPM · {beatsPerBar} beats per bar</p>
+      {voicePcm && <div className="flex flex-col items-center gap-3">
+        <SecondaryButton variant="soft" className="icon-action review-preview" aria-label={isPlaying ? "Stop recording preview" : "Play recording with beat"} aria-pressed={isPlaying} onClick={togglePlayback}><Icon name={isPlaying ? "stop" : "play"} /></SecondaryButton>
+        {isPlaying && <div className="flex gap-2" aria-hidden="true">{Array.from({ length: beatsPerBar }, (_, i) => <span key={i} className={`review-beat ${currentBeat === i + 1 ? "is-playing" : ""}`} />)}</div>}
+        <p className="phase-hint text-center">{isPlaying ? "Listening… adjust timing if the clicks need a nudge." : "Play to hear your recording with the beat."}</p>
+      </div>}
+      <details className="precision-details"><summary>Adjust timing</summary><Surface className="settings-stack">
+        <div><p className="field-label">Tempo</p><div className="tempo-controls">
+          <SecondaryButton variant="quiet" className="icon-action" aria-label="Decrease tempo" onClick={() => { stopPlayback(); onBpmChange(Math.max(40, bpm - 1)); }}>−</SecondaryButton>
+          <label className="tempo-value">
+            <input
+              type="text"
+              inputMode="numeric"
+              aria-label="Tempo in beats per minute"
+              value={bpmFocused ? bpmDraft : String(bpm)}
+              onFocus={(e) => { setBpmDraft(String(bpm)); setBpmFocused(true); e.target.select(); }}
+              onChange={(e) => setBpmDraft(e.target.value.replace(/[^0-9]/g, ""))}
+              onBlur={() => { setBpmFocused(false); const value = parseInt(bpmDraft, 10); if (!isNaN(value)) { stopPlayback(); onBpmChange(Math.max(40, Math.min(200, value))); } }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            /><span>BPM</span>
+          </label>
+          <SecondaryButton variant="quiet" className="icon-action" aria-label="Increase tempo" onClick={() => { stopPlayback(); onBpmChange(Math.min(200, bpm + 1)); }}>+</SecondaryButton>
+        </div></div>
+        <SelectionGroup label="Beats per bar" value={String(beatsPerBar)} options={[{ value: "3", label: "3 beats" }, { value: "4", label: "4 beats" }]} onChange={(value) => { stopPlayback(); onBeatsPerBarChange(Number(value)); }} />
+        {voicePcm && <>
+          <AlignTimeline voiceDuration={voiceDuration} bpm={bpm} beatsPerBar={beatsPerBar} beatOffset={beatOffset} onChange={onBeatOffsetChange} />
+          <label className="field-label">Beat alignment · {beatOffset.toFixed(2)} seconds
+            <input type="range" aria-label="Beat alignment in seconds" min={-(60 / bpm) * beatsPerBar * 2} max={(60 / bpm) * beatsPerBar * 2} step={0.05} value={beatOffset} onChange={(e) => onBeatOffsetChange(Number(e.target.value))} className="w-full accent-ink" />
+          </label>
+        </>}
+      </Surface></details>
+      <ActionButton onClick={() => { stopPlayback(); onContinue(); }}>Play with chords<Icon name="arrow" /></ActionButton>
     </div>
   );
 }

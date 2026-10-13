@@ -11,7 +11,7 @@ type TrackId = "voice" | "chords" | "drums";
 interface TrackData {
   id: TrackId;
   label: string;
-  icon: string;
+  icon: React.ReactNode;
   pcm: VoicePcm;
   onPcmChange: (pcm: VoicePcm) => void;
 }
@@ -199,7 +199,7 @@ export default function MultiTrackEditor({
         onUndo={handleUndo}
       />
 
-      <div className="rounded-lg border border-surface-card overflow-hidden">
+      <div className="rounded-lg border border-surface-soft overflow-hidden bg-ink">
         <div className="flex">
           {/* Track headers */}
           <div className="flex flex-col shrink-0" style={{ width: 80 }}>
@@ -208,14 +208,19 @@ export default function MultiTrackEditor({
               return (
                 <div
                   key={track.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Edit ${track.label} track`}
+                  aria-pressed={isActive}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveTrackId(track.id); } }}
                   onClick={() => setActiveTrackId(track.id)}
                   className={`h-[120px] flex items-center gap-1.5 px-2 cursor-pointer select-none transition-colors ${
                     isActive
-                      ? "bg-neon-purple/10 text-neon-purple border-r-2 border-r-neon-purple"
-                      : "bg-surface-card/30 text-text-secondary hover:bg-surface-card/50 border-r-2 border-r-transparent"
+                      ? "bg-lavender text-ink border-r-2 border-r-ink"
+                      : "bg-cream text-text-secondary hover:bg-lavender border-r-2 border-r-transparent"
                   }`}
                 >
-                  <span>{track.icon}</span>
+                  <span className="shrink-0">{track.icon}</span>
                   <span className="text-xs font-medium">{track.label}</span>
                 </div>
               );
@@ -235,7 +240,7 @@ export default function MultiTrackEditor({
                     onPointerDown={() => {
                       if (!isActive) setActiveTrackId(track.id);
                     }}
-                    className={isActive ? "" : "opacity-60"}
+                    className={isActive ? "" : "opacity-85"}
                   >
                     <WaveformCanvas
                       bare

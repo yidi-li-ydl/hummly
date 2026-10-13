@@ -1,80 +1,60 @@
 "use client";
 
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect } from "react";
 
-interface Props {
-  analyserNode: AnalyserNode | null;
-  isActive: boolean;
-}
+interface Props { analyserNode: AnalyserNode | null; isActive: boolean; }
 
 export default function WaveformVisualizer({ analyserNode, isActive }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animationRef = useRef<number>(0);
-
-  const draw = useCallback(() => {
+  useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !analyserNode) return;
-
+    if (!canvas || !analyserNode || !isActive) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
-    const bufferLength = analyserNode.fftSize;
-    const dataArray = new Float32Array(bufferLength);
-    analyserNode.getFloatTimeDomainData(dataArray);
-
-    const { width, height } = canvas;
-    ctx.clearRect(0, 0, width, height);
-
-    // Draw waveform
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = isActive ? "#a855f7" : "#4a4a6a";
-    ctx.beginPath();
-
-    const sliceWidth = width / bufferLength;
-    let x = 0;
-
-    for (let i = 0; i < bufferLength; i++) {
-      const v = dataArray[i];
-      const y = (v + 1) / 2 * height;
-
-      if (i === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
+    const styles = getComputedStyle(canvas);
+    const ink = styles.getPropertyValue("--ink").trim();
+    const lime = styles.getPropertyValue("--lime").trim();
+    const neutral = styles.getPropertyValue("--border").trim();
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const samples = new Float32Array(analyserNode.fftSize);
+    let frame = 0;
+    let lastDraw = 0;
+    let energy = 0;
+    function draw(now: number) {
+      if (!canvas || !ctx || !analyserNode) return;
+      // Reduced motion retains a quiet, audio-driven level meter at 5fps.
+      if (now - lastDraw >= (motion.matches ? 200 : 33)) {
+        lastDraw = now;
+        analyserNode.getFloatTimeDomainData(samples);
+        const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+        energy += (Math.min(1, rms * 5) - energy) * .3;
+        const { width, height } = canvas;
+        ctx.clearRect(0, 0, width, height);
+        ctx.strokeStyle = ink;
+        ctx.fillStyle = ink;
+        ctx.lineWidth = 5;
+        ctx.lineCap = "round";
+        if (motion.matches) {
+          ctx.fillStyle = neutral;
+          ctx.fillRect(0, height / 2 - 5, width, 10);
+          ctx.fillStyle = ink;
+          ctx.fillRect(0, height / 2 - 5, Math.max(3, energy * width), 10);
+        } else {
+          ctx.beginPath();
+          for (let x = 0; x <= width; x += 3) {
+            const sample = samples[Math.min(samples.length - 1, Math.floor(x / width * samples.length))];
+            const y = height / 2 + Math.max(-1, Math.min(1, sample * 2.5)) * height * .4;
+            if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+          ctx.fillStyle = lime;
+          ctx.fillRect(0, height - 5, energy * width, 4);
+        }
       }
-      x += sliceWidth;
+      frame = requestAnimationFrame(draw);
     }
-
-    ctx.stroke();
-
-    // Glow effect when active
-    if (isActive) {
-      ctx.shadowBlur = 10;
-      ctx.shadowColor = "#a855f7";
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-    }
-
-    animationRef.current = requestAnimationFrame(draw);
+    frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
   }, [analyserNode, isActive]);
-
-  useEffect(() => {
-    if (analyserNode && isActive) {
-      animationRef.current = requestAnimationFrame(draw);
-    }
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
-  }, [analyserNode, isActive, draw]);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      width={600}
-      height={120}
-      className="w-full h-[120px] rounded-lg bg-surface-secondary border border-surface-card"
-    />
-  );
+  return <canvas ref={canvasRef} width={600} height={120} className="live-waveform" role="img" aria-label="Live microphone waveform; responds to your voice" />;
 }

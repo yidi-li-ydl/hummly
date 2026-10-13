@@ -23,7 +23,7 @@ export default function HummiPreview() {
 
   return (
     <main className="w-full max-w-5xl mx-auto px-4 py-8 sm:py-12" lang="en">
-      <Link href="/" className="text-sm text-neon-cyan hover:underline">← Back to Hummly</Link>
+      <Link href="/" className="text-sm text-ink hover:underline">← Back to Hummly</Link>
       <div className="flex flex-wrap items-center justify-between gap-4 mt-6 mb-3">
         <h1 className="text-3xl font-semibold">Meet Hummi</h1>
         <button
@@ -31,7 +31,7 @@ export default function HummiPreview() {
           aria-pressed={animated}
           disabled={!hummiAnimationsReady}
           onClick={() => setAnimated((value) => !value)}
-          className="rounded-lg px-4 py-2 bg-surface-card text-text-primary border border-text-secondary/30 hover:border-neon-purple focus-visible:outline-2 focus-visible:outline-neon-cyan"
+          className="rounded-lg px-4 py-2 bg-surface-soft text-text-primary border border-text-secondary/30 hover:border-ink focus-visible:outline-2 focus-visible:outline-ink"
         >
           {!hummiAnimationsReady ? "Animations in review" : animated ? "Pause animations" : "Play animations"}
         </button>
@@ -42,18 +42,18 @@ export default function HummiPreview() {
       </p>
       {!animated && (
         <div className="flex flex-wrap items-center gap-3 mb-6">
-          <button type="button" onClick={() => setFrame((value) => (value + 95) % 96)} className="px-3 py-2 rounded-lg bg-surface-card">Previous frame</button>
+          <button type="button" onClick={() => setFrame((value) => (value + 95) % 96)} className="px-3 py-2 rounded-lg bg-surface-soft">Previous frame</button>
           <span className="text-sm tabular-nums" aria-live="polite">Frame {frame + 1} / 96</span>
-          <button type="button" onClick={() => setFrame((value) => (value + 1) % 96)} className="px-3 py-2 rounded-lg bg-surface-card">Next frame</button>
+          <button type="button" onClick={() => setFrame((value) => (value + 1) % 96)} className="px-3 py-2 rounded-lg bg-surface-soft">Next frame</button>
         </div>
       )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {poses.map(({ state, name, motion }, index) => (
-          <section key={state} className="flex flex-col items-center rounded-2xl bg-surface-secondary border border-surface-card px-4 py-6 min-w-0">
+          <section key={state} className="flex flex-col items-center rounded-2xl bg-surface-secondary border border-surface-soft px-4 py-6 min-w-0">
             <Hummi state={state} size="large" animated={animated} frame={animated ? undefined : frame} priority={index < 4} />
             <h2 className="text-base font-medium mt-3">{name}</h2>
             <p className="text-text-secondary text-xs mt-2 text-center">{motion}</p>
-            <a href={hummiAnimations[state].src.replace(/\.webp$/, "-loop.webp")} download className="text-neon-cyan text-xs mt-3 hover:underline">Download animated WebP</a>
+            <a href={hummiAnimations[state].src.replace(/\.webp$/, "-loop.webp")} download className="text-ink text-xs mt-3 hover:underline">Download animated WebP</a>
           </section>
         ))}
       </div>

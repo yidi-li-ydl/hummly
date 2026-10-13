@@ -17,9 +17,9 @@ interface TimelineProps {
 type TrackKey = "voice" | "chords" | "drums";
 
 const TRACK_COLORS: Record<TrackKey, { bg: string; border: string; text: string }> = {
-  voice:  { bg: "bg-neon-purple/30", border: "border-neon-purple", text: "text-neon-purple" },
-  chords: { bg: "bg-neon-cyan/30",   border: "border-neon-cyan",   text: "text-neon-cyan" },
-  drums:  { bg: "bg-neon-green/30",  border: "border-neon-green",  text: "text-neon-green" },
+  voice:  { bg: "bg-ink/30", border: "border-ink", text: "text-ink" },
+  chords: { bg: "bg-ink/30",   border: "border-ink",   text: "text-ink" },
+  drums:  { bg: "bg-ink/30",  border: "border-ink",  text: "text-ink" },
 };
 
 const TRACK_LABELS: Record<TrackKey, string> = {
@@ -133,7 +133,7 @@ export default function Timeline({
 
       <div
         ref={containerRef}
-        className="relative bg-surface-card rounded-lg border border-white/5 p-3 pt-6"
+        className="relative bg-surface-soft rounded-lg border border-white/5 p-3 pt-6"
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
@@ -149,7 +149,7 @@ export default function Timeline({
               <span className="text-[9px] text-text-secondary/60 font-mono">
                 {t}s
               </span>
-              <div className="w-px h-1.5 bg-white/10 mt-0.5" />
+              <div className="w-px h-1.5 bg-ink/15 mt-0.5" />
             </div>
           ))}
         </div>
@@ -172,7 +172,7 @@ export default function Timeline({
                 </span>
 
                 {/* Track lane */}
-                <div className="relative flex-1 h-7 rounded bg-white/5">
+                <div className="relative flex-1 h-7 rounded bg-ink/5">
                   {/* Draggable block */}
                   <div
                     onPointerDown={(e) => onPointerDown(key, e)}
@@ -189,7 +189,7 @@ export default function Timeline({
                       minWidth: "12px",
                     }}
                   >
-                    <span className="text-[8px] font-mono text-white/50 pointer-events-none truncate px-1">
+                    <span className="text-[8px] font-mono text-ink/80 pointer-events-none truncate px-1">
                       {duration.toFixed(1)}s
                     </span>
                   </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import SecondaryButton from "./ui/SecondaryButton";
 
 export interface WaveformToolbarProps {
   hasSelection: boolean;
@@ -43,99 +44,95 @@ export default function WaveformToolbar({
         </svg>
         <input
           type="range"
+          aria-label="Waveform zoom"
           min={MIN_PPS}
           max={MAX_PPS}
           value={pixelsPerSecond}
           onChange={(e) => onPixelsPerSecondChange(Number(e.target.value))}
-          className="w-20 accent-neon-cyan"
+          className="w-20 accent-ink"
           disabled={allDisabled}
         />
       </label>
 
-      <span className="w-px h-5 bg-surface-card" />
+      <span className="w-px h-5 bg-surface-soft" />
 
       {/* Cut */}
-      <button
+      <SecondaryButton
         onClick={onCut}
         disabled={opsDisabled}
-        className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-surface-card hover:bg-surface-secondary text-text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         <span>Cut</span>
-      </button>
+      </SecondaryButton>
 
       {/* Silence */}
-      <button
+      <SecondaryButton
         onClick={onSilence}
         disabled={opsDisabled}
-        className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-surface-card hover:bg-surface-secondary text-text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         <span>Silence</span>
-      </button>
+      </SecondaryButton>
 
       {/* Stretch */}
       {!stretchOpen ? (
-        <button
+        <SecondaryButton
           onClick={() => setStretchOpen(true)}
           disabled={opsDisabled}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-surface-card hover:bg-surface-secondary text-text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
+          >
           <span>Stretch</span>
-        </button>
+        </SecondaryButton>
       ) : (
-        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-surface-card border border-surface-card">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-text-secondary">Faster</span>
           <input
             type="range"
+            aria-label="Time stretch ratio"
             min={0.5}
             max={2.0}
             step={0.05}
             value={ratio}
             onChange={(e) => setRatio(Number(e.target.value))}
-            className="w-24 accent-neon-cyan"
+            className="w-24 accent-ink"
             disabled={allDisabled}
           />
           <span className="text-text-secondary">Slower</span>
           <span className="text-text-primary font-mono w-10 text-center">{ratio.toFixed(2)}x</span>
-          <button
+          <SecondaryButton
             onClick={() => {
               onStretch(ratio);
               setStretchOpen(false);
               setRatio(1.0);
             }}
             disabled={allDisabled}
-            className="px-2 py-0.5 rounded bg-neon-cyan/20 text-neon-cyan hover:bg-neon-cyan/30 disabled:opacity-40 transition-colors"
           >
             Apply
-          </button>
-          <button
+          </SecondaryButton>
+          <SecondaryButton
             onClick={() => {
               setStretchOpen(false);
               setRatio(1.0);
             }}
-            className="px-2 py-0.5 rounded text-text-secondary hover:text-text-primary transition-colors"
           >
             Cancel
-          </button>
+          </SecondaryButton>
         </div>
       )}
 
-      <span className="w-px h-5 bg-surface-card" />
+      <span className="w-px h-5 bg-surface-soft" />
 
       {/* Undo */}
-      <button
+      <SecondaryButton
         onClick={onUndo}
         disabled={allDisabled || !hasHistory}
-        className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-surface-card hover:bg-surface-secondary text-text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" />
         </svg>
         <span>Undo</span>
-      </button>
+      </SecondaryButton>
 
       {/* Spinner when processing */}
       {isProcessing && (
-        <div className="w-4 h-4 rounded-full border-2 border-neon-cyan border-t-transparent animate-spin" />
+        <div className="w-4 h-4 rounded-full border-2 border-ink border-t-transparent animate-spin" />
       )}
     </div>
   );

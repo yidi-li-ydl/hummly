@@ -3,6 +3,10 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import WaveformVisualizer from "./WaveformVisualizer";
 import Hummi from "./Hummi";
+import Icon from "./Icon";
+import ActionButton from "./ui/ActionButton";
+import SecondaryButton from "./ui/SecondaryButton";
+import Surface from "./ui/Surface";
 import { createRecorder, type RecorderHandle } from "@/lib/audio/recorder";
 import { startPitchTracking, detectPitchOffline } from "@/lib/audio/pitchDetector";
 import type { PitchReading, VoicePcm } from "@/lib/types";
@@ -28,11 +32,13 @@ interface Props {
 }
 
 export default function RecordStep({ onComplete }: Props) {
-  const [phase, setPhase] = useState<"idle" | "recording" | "uploading">("idle");
+  const [phase, setPhase] = useState<"idle" | "requesting" | "recording" | "uploading">("idle");
   const [elapsed, setElapsed] = useState(0);
   const [currentNote, setCurrentNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [analyserNode, setAnalyserNode] = useState<AnalyserNode | null>(null);
+  const mountedRef = useRef(false);
+  const busyRef = useRef(false);
   const recorderRef = useRef<RecorderHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const readingsRef = useRef<PitchReading[]>([]);
@@ -56,214 +62,144 @@ export default function RecordStep({ onComplete }: Props) {
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       cleanup();
       recorderRef.current?.cleanup();
     };
   }, [cleanup]);
 
   const stopRecordingRef = useRef<(() => void) | null>(null);
-
   const startRecording = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setPhase("requesting");
+    setError(null);
+    setElapsed(0);
+    setCurrentNote(null);
+    readingsRef.current = [];
     try {
-      setError(null);
-      readingsRef.current = [];
-      setCurrentNote(null);
-      setElapsed(0);
-
       const recorder = await createRecorder();
+      if (!mountedRef.current) { recorder.cleanup(); return; }
       recorderRef.current = recorder;
       setAnalyserNode(recorder.analyserNode);
-
-      setPhase("recording");
-
-      stopPitchRef.current = startPitchTracking(
-        recorder.analyserNode,
-        recorder.audioContext,
-        (reading) => {
-          readingsRef.current.push(reading);
-          setCurrentNote(freqToNoteName(reading.frequency));
-        }
-      );
-
       recorder.startRecording();
-
+      stopPitchRef.current = startPitchTracking(recorder.analyserNode, recorder.audioContext, (reading) => {
+        readingsRef.current.push(reading);
+        setCurrentNote(freqToNoteName(reading.frequency));
+      });
+      setPhase("recording");
       const start = Date.now();
-      timerRef.current = setInterval(() => {
-        setElapsed((Date.now() - start) / 1000);
-      }, 100);
-
-      autoStopTimerRef.current = setTimeout(() => {
-        stopRecordingRef.current?.();
-      }, MAX_RECORDING_SECONDS * 1000);
-    } catch {
-      setError("Microphone access denied. Please allow microphone permissions.");
+      timerRef.current = setInterval(() => setElapsed((Date.now() - start) / 1000), 100);
+      autoStopTimerRef.current = setTimeout(() => stopRecordingRef.current?.(), MAX_RECORDING_SECONDS * 1000);
+    } catch (err) {
+      cleanup();
+      recorderRef.current?.cleanup();
+      recorderRef.current = null;
+      if (!mountedRef.current) return;
+      setAnalyserNode(null);
+      const denied = err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "SecurityError");
+      setError(denied
+        ? "Let’s give your melody a way in. Allow microphone access in your browser, then try again. You can also upload audio."
+        : "We couldn’t connect to your microphone. Check that it’s available, or upload an audio file instead.");
       setPhase("idle");
+      busyRef.current = false;
     }
   };
 
   const stopRecording = useCallback(() => {
     if (!recorderRef.current) return;
     cleanup();
-    setPhase("idle");
-
     const pcm = recorderRef.current.stopRecording();
     recorderRef.current.cleanup();
     recorderRef.current = null;
+    busyRef.current = false;
+    setPhase("idle");
     setAnalyserNode(null);
-
     onComplete(pcm, readingsRef.current);
   }, [cleanup, onComplete]);
 
-  useEffect(() => {
-    stopRecordingRef.current = stopRecording;
-  }, [stopRecording]);
+  useEffect(() => { stopRecordingRef.current = stopRecording; }, [stopRecording]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || busyRef.current) return;
     e.target.value = "";
-
+    busyRef.current = true;
+    let audioCtx: AudioContext | null = null;
     try {
       setError(null);
       setPhase("uploading");
-
       const arrayBuffer = await file.arrayBuffer();
-      const audioCtx = new AudioContext();
+      if (!mountedRef.current) return;
+      audioCtx = new AudioContext();
       const decoded = await audioCtx.decodeAudioData(arrayBuffer);
-
-      let mono: Float32Array;
-      if (decoded.numberOfChannels === 1) {
-        mono = decoded.getChannelData(0);
-      } else {
-        const ch0 = decoded.getChannelData(0);
-        const ch1 = decoded.getChannelData(1);
-        mono = new Float32Array(ch0.length);
-        for (let i = 0; i < ch0.length; i++) {
-          mono[i] = (ch0[i] + ch1[i]) / 2;
-        }
+      if (!mountedRef.current) return;
+      const mono = new Float32Array(decoded.length);
+      for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+        const channel = decoded.getChannelData(ch);
+        for (let i = 0; i < mono.length; i++) mono[i] += channel[i] / decoded.numberOfChannels;
       }
-
       const pcm: VoicePcm = { channels: [mono], sampleRate: decoded.sampleRate };
       const readings = detectPitchOffline(mono, decoded.sampleRate);
-
-      await audioCtx.close();
-      setPhase("idle");
       onComplete(pcm, readings);
     } catch {
-      setError("Could not decode audio file. Try a different .mp3 or .wav file.");
-      setPhase("idle");
+      if (mountedRef.current) {
+        setError("That file couldn’t be opened. Try a WAV or MP3 with a clear melody, or hum a new one.");
+        setPhase("idle");
+      }
+    } finally {
+      if (audioCtx && audioCtx.state !== "closed") await audioCtx.close();
+      busyRef.current = false;
     }
   };
 
+  const recording = phase === "recording";
+  const pending = phase === "requesting" || phase === "uploading";
   return (
-    <div className="flex flex-col items-center gap-6">
-      {phase === "idle" && (
-        <div className="flex flex-col items-center text-center gap-2 pt-2 pb-1 max-w-sm">
-          <Hummi state="curious-listening" size="large" animated priority />
-          <h2 className="text-xl font-semibold">A little hum. A little magic.</h2>
-          <p className="text-text-secondary text-sm leading-relaxed px-2">
-            I’m Hummi. Start with a melody, however small.<br />
-            We’ll find its chords and rhythm together.
-          </p>
-          <p className="text-text-secondary text-xs mt-1">Every hum deserves to become something.</p>
+    <section className="record-layout" aria-labelledby="record-title">
+      <div className="record-copy">
+        <div className="record-intro">
+          <p className="eyebrow">Your melody starts here</p>
+          <h1 id="record-title">Got a tune<br />in your <em>head?</em></h1>
+          <p className="record-description">Hum a little. Let’s see where it goes.<br />We’ll find its chords and rhythm together.</p>
         </div>
-      )}
-      {phase !== "idle" && (
-        <WaveformVisualizer
-          analyserNode={analyserNode}
-          isActive={phase === "recording"}
-        />
-      )}
-
-      {/* Uploading spinner */}
-      {phase === "uploading" && (
-        <div className="flex flex-col items-center gap-2">
-          <svg className="w-10 h-10 text-neon-purple animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <p className="text-text-secondary text-xs">Decoding & analyzing...</p>
-        </div>
-      )}
-
-      {/* Recording display: elapsed time + detected note */}
-      {phase === "recording" && (
-        <div className="flex flex-col items-center gap-3">
-          <div className="text-2xl font-bold text-neon-cyan tabular-nums">
-            {formatTime(elapsed)}
+        <div className="record-controls">
+          <input ref={fileInputRef} type="file" accept="audio/*" className="hidden" aria-label="Choose an audio file" onChange={handleFileUpload} />
+          <div className="record-actions">
+            <ActionButton
+              tone={recording ? "dark" : "lime"}
+              onClick={recording ? stopRecording : startRecording}
+              disabled={pending}
+            >
+              <Icon name={recording ? "stop" : "mic"} />
+              {recording ? "Stop & hear it" : phase === "requesting" ? "Connecting microphone…" : phase === "uploading" ? "Opening your audio…" : "Start humming"}
+              {!recording && !pending && <Icon name="arrow" className="action-arrow" />}
+            </ActionButton>
+            {phase === "idle" && <SecondaryButton variant="outline" onClick={() => fileInputRef.current?.click()}><Icon name="upload" /> Upload audio</SecondaryButton>}
           </div>
-          <div className="h-8 flex items-center justify-center">
-            {currentNote ? (
-              <span className="text-xl font-bold text-neon-cyan">{currentNote}</span>
-            ) : (
-              <span className="text-text-secondary text-sm">Listening...</span>
-            )}
-          </div>
+          <p className="record-hint">{recording ? "Keep humming. Tap stop when you’re ready." : "Up to 30 seconds of recording. No music theory needed."}</p>
+          {error && <p className="recovery-message" role="alert">{error}</p>}
         </div>
-      )}
-
-      {/* Hidden file input for upload */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="audio/*"
-        className="hidden"
-        onChange={handleFileUpload}
-      />
-
-      {/* Record / Stop button + Upload */}
-      <div className="flex items-center gap-6">
-        <button
-          onClick={
-            phase === "idle"
-              ? startRecording
-              : phase === "recording"
-              ? stopRecording
-              : undefined
-          }
-          disabled={phase === "uploading"}
-          aria-label={phase === "recording" ? "Stop recording" : "Record your melody"}
-          className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${
-            phase === "recording"
-              ? "bg-red-500 hover:bg-red-400 animate-recording-pulse"
-              : "bg-neon-purple hover:bg-neon-purple/80 animate-pulse-neon"
-          } ${phase === "uploading" ? "opacity-50 cursor-not-allowed" : ""}`}
-        >
-          {phase === "recording" ? (
-            <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
-              <rect x="6" y="6" width="12" height="12" rx="2" />
-            </svg>
-          ) : (
-            <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
-              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-            </svg>
-          )}
-        </button>
-
-        {phase === "idle" && (
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="Upload an audio file"
-            className="w-20 h-20 rounded-full flex items-center justify-center transition-all bg-surface-card hover:bg-surface-secondary border border-text-secondary/30"
-          >
-            <svg className="w-8 h-8 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5-5m0 0l5 5m-5-5v12" />
-            </svg>
-          </button>
-        )}
       </div>
-
-      <p className="text-text-secondary text-xs">
-        {phase === "uploading"
-          ? "Analyzing audio file..."
-          : phase === "recording"
-          ? "Hum your melody... tap stop when done"
-          : "Tap to record or upload an audio file"}
-      </p>
-
-      {error && <p className="text-red-400 text-sm">{error}</p>}
-    </div>
+      <div className={`music-stage ${recording ? "is-recording" : ""}`}>
+        <div className="stage-caption" role="status">
+          {recording ? <span className="recording-dot" /> : <Icon name="spark" />}
+          {recording ? "Recording · I’m listening" : phase === "requesting" ? "Waiting for microphone access" : phase === "uploading" ? "Reading your melody" : "Meet your creative sidekick"}
+        </div>
+        {recording && <span className="stage-counter">{formatTime(elapsed)} / 0:30</span>}
+        {phase === "idle" && <>
+          <Icon name="spark" className="stage-detail stage-detail-spark" />
+          <Icon name="note" className="stage-detail stage-detail-note" />
+        </>}
+        <div className="stage-hummi"><Hummi state="curious-listening" size="large" animated={!recording && !pending} priority /></div>
+        <p className="stage-message">{recording ? "That’s it. Make it your own." : pending ? "Your little tune is on its way." : "Every hum deserves to become something."}</p>
+        {recording ? <>
+          <Surface className="recording-canvas"><WaveformVisualizer analyserNode={analyserNode} isActive /></Surface>
+          <span className="note-detail">{currentNote ? `Pitch detected · ${currentNote}` : "Hum a clear, steady melody"}</span>
+        </> : null}
+      </div>
+    </section>
   );
 }

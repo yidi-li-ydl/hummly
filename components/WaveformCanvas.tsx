@@ -18,14 +18,6 @@ export interface WaveformCanvasProps {
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
 }
 
-const BG_COLOR = "#12121a";
-const WAVE_COLOR = "#a855f7";
-const DOWNBEAT_COLOR = "#22d3ee";
-const BEAT_COLOR = "rgba(34,211,238,0.3)";
-const SEL_FILL = "rgba(34,211,238,0.15)";
-const SEL_EDGE = "#22d3ee";
-const PLAYHEAD_COLOR = "#4ade80";
-
 export default function WaveformCanvas({
   pcm,
   bpm,
@@ -78,9 +70,14 @@ export default function WaveformCanvas({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const colors = getComputedStyle(canvas);
+    const ink = colors.getPropertyValue("--ink").trim();
+    const lavender = colors.getPropertyValue("--lavender").trim();
+    const lime = colors.getPropertyValue("--lime").trim();
+    const grid = colors.getPropertyValue("--text-muted").trim();
 
     // 1. Background
-    ctx.fillStyle = BG_COLOR;
+    ctx.fillStyle = ink;
     ctx.fillRect(0, 0, logicalWidth, logicalHeight);
 
     // 2. Beat grid
@@ -91,7 +88,7 @@ export default function WaveformCanvas({
       const x = secToX(sec);
       const beatIndex = Math.round((sec - firstBeatSec) / beatDuration);
       const isDownbeat = beatIndex % beatsPerBar === 0;
-      ctx.strokeStyle = isDownbeat ? DOWNBEAT_COLOR : BEAT_COLOR;
+      ctx.strokeStyle = isDownbeat ? lavender : grid;
       ctx.lineWidth = isDownbeat ? 1 : 0.5;
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -100,7 +97,7 @@ export default function WaveformCanvas({
     }
 
     // 3. Waveform
-    ctx.strokeStyle = WAVE_COLOR;
+    ctx.strokeStyle = lavender;
     ctx.lineWidth = 1;
     for (let px = 0; px < logicalWidth; px++) {
       const yMin = mid - peaks.max[px] * mid;
@@ -115,9 +112,11 @@ export default function WaveformCanvas({
     if (selection) {
       const x0 = secToX(selection.startSec);
       const x1 = secToX(selection.endSec);
-      ctx.fillStyle = SEL_FILL;
+      ctx.fillStyle = lavender;
+      ctx.globalAlpha = .15;
       ctx.fillRect(x0, 0, x1 - x0, logicalHeight);
-      ctx.strokeStyle = SEL_EDGE;
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = lime;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(x0, 0);
@@ -130,7 +129,7 @@ export default function WaveformCanvas({
     // 5. Playhead
     if (currentTime !== undefined && currentTime >= 0) {
       const x = secToX(currentTime);
-      ctx.strokeStyle = PLAYHEAD_COLOR;
+      ctx.strokeStyle = lime;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -199,7 +198,7 @@ export default function WaveformCanvas({
   if (bare) return canvasEl;
 
   return (
-    <div className="overflow-x-auto w-full rounded-lg border border-surface-card">
+    <div className="overflow-x-auto w-full rounded-lg border border-surface-soft">
       {canvasEl}
     </div>
   );

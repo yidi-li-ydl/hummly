@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer, useCallback } from "react";
+import { useReducer, useCallback, useEffect, useRef } from "react";
 import StepIndicator from "./StepIndicator";
 import RecordStep from "./RecordStep";
 import ProcessingStep from "./ProcessingStep";
@@ -8,6 +8,8 @@ import ReviewStep from "./ReviewStep";
 import ChordStep from "./ChordStep";
 import DrumStep from "./DrumStep";
 import MixStep from "./MixStep";
+import ActionButton from "./ui/ActionButton";
+import SecondaryButton from "./ui/SecondaryButton";
 import type {
   HummlyState,
   HummlyAction,
@@ -85,7 +87,7 @@ function reducer(state: HummlyState, action: HummlyAction): HummlyState {
     case "SET_MIX":
       return { ...state, mixBuffer: action.buffer, mixUrl: action.url };
     case "SET_ERROR":
-      return { ...state, error: action.error, step: "record" };
+      return { ...state, error: action.error };
     case "RESET":
       return { ...initialState };
     default:
@@ -95,6 +97,15 @@ function reducer(state: HummlyState, action: HummlyAction): HummlyState {
 
 export default function StepWizard() {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const wizardRef = useRef<HTMLDivElement>(null);
+  const previousStep = useRef(state.step);
+  useEffect(() => {
+    if (previousStep.current !== state.step || state.error) {
+      const heading = wizardRef.current?.querySelector<HTMLElement>("h1");
+      if (heading) { heading.tabIndex = -1; heading.focus(); }
+    }
+    previousStep.current = state.step;
+  }, [state.step, state.error]);
 
   const handleBpmChange = useCallback((bpm: number) => {
     dispatch({ type: "SET_BPM", bpm });
@@ -165,12 +176,15 @@ export default function StepWizard() {
   }, []);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="wizard" ref={wizardRef}>
       <StepIndicator currentStep={state.step} />
 
-      {state.error && state.step === "record" && (
-        <div className="mx-auto mb-4 px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
-          {state.error}
+      {state.error && (
+        <div className="work-panel recovery-message" role="alert">
+          <h1 className="text-xl font-semibold">Let’s give that tune another try.</h1>
+          <p>{state.error}</p>
+          {state.voicePcm && <ActionButton onClick={() => dispatch({ type: "SET_STEP", step: "processing" })}>Retry this recording</ActionButton>}
+          <SecondaryButton onClick={handleStartOver}>Record or upload another melody</SecondaryButton>
         </div>
       )}
 
@@ -178,15 +192,18 @@ export default function StepWizard() {
         <RecordStep onComplete={handleRecordComplete} />
       )}
 
-      {state.step === "processing" && (
+      {state.step === "processing" && !state.error && (
         <ProcessingStep
           readings={state.pitchReadings}
+          voicePcm={state.voicePcm}
           onComplete={handleProcessingComplete}
           onError={handleProcessingError}
         />
       )}
 
       {state.step === "review" && state.detectedKey && (
+        <section className="work-panel">
+          <div className="work-heading"><p className="eyebrow">Play with your music</p><h1>Your melody, found.</h1><p>Have a listen. Adjust the timing if it needs a little nudge.</p></div>
         <ReviewStep
           detectedKey={state.detectedKey}
           bpm={state.bpm}
@@ -198,9 +215,12 @@ export default function StepWizard() {
           onBeatOffsetChange={handleBeatOffsetChange}
           onContinue={handleReviewContinue}
         />
+        </section>
       )}
 
       {state.step === "chords" && state.detectedKey && (
+        <section className="work-panel">
+          <div className="work-heading"><p className="eyebrow">Play with your music</p><h1>Give it a feeling.</h1><p>Try some chords. Hear what makes your melody yours.</p></div>
         <ChordStep
           options={state.chordOptions}
           detectedKey={state.detectedKey}
@@ -209,11 +229,16 @@ export default function StepWizard() {
           onSelect={handleChordSelect}
           onSkip={handleChordSkip}
         />
+        </section>
       )}
 
-      {state.step === "drums" && <DrumStep options={state.drumOptions} beatsPerBar={state.beatsPerBar} bpm={state.bpm} onSelect={handleDrumSelect} onSkip={handleDrumSkip} />}
+      {state.step === "drums" && <section className="work-panel">
+        <div className="work-heading"><p className="eyebrow">Play with your music</p><h1>Find your groove.</h1><p>Try a beat, or keep it simple.</p></div>
+        <DrumStep options={state.drumOptions} beatsPerBar={state.beatsPerBar} bpm={state.bpm} onSelect={handleDrumSelect} onSkip={handleDrumSkip} />
+      </section>}
 
       {state.step === "mix" && state.detectedKey && (
+        <section className="work-panel">
         <MixStep
           notes={state.notes}
           chords={state.selectedChords}
@@ -232,6 +257,7 @@ export default function StepWizard() {
           onMelodyVoiceChange={handleMelodyVoiceChange}
           onStartOver={handleStartOver}
         />
+        </section>
       )}
     </div>
   );

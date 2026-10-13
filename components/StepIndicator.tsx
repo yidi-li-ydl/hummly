@@ -1,55 +1,17 @@
-"use client";
-
 import type { WizardStep } from "@/lib/types";
 
-const STEPS: { key: WizardStep; label: string }[] = [
-  { key: "record", label: "Record" },
-  { key: "processing", label: "Analyze" },
-  { key: "review", label: "Review" },
-  { key: "chords", label: "Chords" },
-  { key: "drums", label: "Drums" },
-  { key: "mix", label: "Mix" },
-];
-
+const PHASES = ["Hum", "Transform", "Play", "Create"];
+const PHASE_INDEX: Record<WizardStep, number> = { record: 0, processing: 1, review: 2, chords: 2, drums: 2, mix: 3 };
 export default function StepIndicator({ currentStep }: { currentStep: WizardStep }) {
-  const currentIndex = STEPS.findIndex((s) => s.key === currentStep);
-
+  const active = PHASE_INDEX[currentStep];
   return (
-    <div className="flex items-center justify-center gap-1 sm:gap-2 mb-8">
-      {STEPS.map((step, i) => {
-        const isActive = i === currentIndex;
-        const isDone = i < currentIndex;
-
-        return (
-          <div key={step.key} className="flex items-center gap-1 sm:gap-2">
-            <div className="flex flex-col items-center gap-1">
-              <div
-                className={`w-3 h-3 rounded-full transition-all duration-300 ${
-                  isActive
-                    ? "bg-neon-purple animate-pulse-neon"
-                    : isDone
-                      ? "bg-neon-green"
-                      : "bg-surface-card"
-                }`}
-              />
-              <span
-                className={`text-[10px] transition-colors ${
-                  isActive ? "text-neon-purple font-medium" : isDone ? "text-neon-green" : "text-text-secondary"
-                }`}
-              >
-                {step.label}
-              </span>
-            </div>
-            {i < STEPS.length - 1 && (
-              <div
-                className={`w-3 sm:w-8 h-px mb-4 transition-colors ${
-                  isDone ? "bg-neon-green" : "bg-surface-card"
-                }`}
-              />
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <nav className="journey" aria-label="Creation progress">
+      <ol>{PHASES.map((label, i) => (
+        <li key={label} className={i === active ? "is-current" : i < active ? "is-complete" : ""} aria-current={i === active ? "step" : undefined}>
+          <span className="journey-number" aria-hidden="true">{i < active ? "✓" : `0${i + 1}`}</span>
+          <span>{label}</span>{i < active && <span className="sr-only">completed</span>}
+        </li>
+      ))}</ol>
+    </nav>
   );
 }

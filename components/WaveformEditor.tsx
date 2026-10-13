@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import type { VoicePcm } from "@/lib/types";
 import { cutSelection, silenceSelection, stretchSelection } from "@/lib/audio/waveformOps";
 import WaveformCanvas from "./WaveformCanvas";
@@ -32,12 +32,14 @@ export default function WaveformEditor({
   const [pixelsPerSecond, setPixelsPerSecond] = useState(100);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Sync when parent provides a new voicePcm (e.g. initial load)
-  useEffect(() => {
+  // Preserve the existing reset-on-new-input behavior before children render.
+  const [previousPcm, setPreviousPcm] = useState(voicePcm);
+  if (previousPcm !== voicePcm) {
+    setPreviousPcm(voicePcm);
     setCurrentPcm(voicePcm);
     setHistory([]);
     setSelection(null);
-  }, [voicePcm]);
+  }
 
   const selToSamples = useCallback(
     (sel: { startSec: number; endSec: number }) => ({

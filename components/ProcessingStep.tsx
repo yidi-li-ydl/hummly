@@ -1,136 +1,106 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { quantizeNotes } from "@/lib/audio/noteQuantizer";
 import { detectKey } from "@/lib/audio/keyDetector";
 import { generateChordProgressions } from "@/lib/audio/chordGenerator";
 import { detectBpmFromNotes, detectBeatOffset } from "@/lib/audio/bpmDetector";
 import { DRUM_STYLES } from "@/lib/audio/drumPatterns";
-import type { PitchReading, QuantizedNote, KeyResult, ChordProgression, DrumStyle } from "@/lib/types";
+import { computePeaks } from "@/lib/audio/waveformOps";
+import Hummi from "./Hummi";
+import Surface from "./ui/Surface";
+import MusicalBlock from "./ui/MusicalBlock";
+import { chordVisual } from "@/lib/musicVisuals";
+import type { PitchReading, QuantizedNote, KeyResult, ChordProgression, DrumStyle, VoicePcm } from "@/lib/types";
 
 interface Props {
   readings: PitchReading[];
-  onComplete: (
-    notes: QuantizedNote[],
-    key: KeyResult,
-    chordOptions: ChordProgression[],
-    drumOptions: DrumStyle[],
-    detectedBpm: number,
-    beatOffset: number
-  ) => void;
+  voicePcm: VoicePcm | null;
+  onComplete: (notes: QuantizedNote[], key: KeyResult, chordOptions: ChordProgression[], drumOptions: DrumStyle[], detectedBpm: number, beatOffset: number) => void;
   onError: (error: string) => void;
 }
+const STAGES = ["Finding your melody", "Finding its key", "Finding its tempo", "Lining up the beat", "Finding its chords", "Preparing rhythm choices"];
 
-const STAGES = [
-  "Extracting notes from pitch data...",
-  "Detecting musical key...",
-  "Detecting tempo...",
-  "Detecting beat alignment...",
-  "Generating chord progressions...",
-  "Preparing drum patterns...",
-];
-
-export default function ProcessingStep({ readings, onComplete, onError }: Props) {
-  const [stage, setStage] = useState(0);
-  const hasRun = useRef(false);
-
-  useEffect(() => {
-    if (hasRun.current) return;
-    hasRun.current = true;
-
-    async function process() {
-      try {
-        // Stage 0: Quantize notes
-        setStage(0);
-        await delay(400);
-        const notes = quantizeNotes(readings);
-
-        if (notes.length === 0) {
-          onError("No melody detected. Try humming louder and more clearly.");
-          return;
-        }
-
-        // Stage 1: Detect key
-        setStage(1);
-        await delay(400);
-        const key = detectKey(notes);
-
-        // Stage 2: Detect BPM
-        setStage(2);
-        await delay(400);
-        const detectedBpm = detectBpmFromNotes(notes);
-
-        // Stage 3: Detect beat offset
-        setStage(3);
-        await delay(400);
-        const beatOffset = detectBeatOffset(notes, detectedBpm);
-
-        // Debug: log note onsets, IOIs, and BPM result
-        if (typeof window !== "undefined") {
-          const onsets = notes.map((n) => n.startTime);
-          const iois = onsets.slice(1).map((t, i) => +(t - onsets[i]).toFixed(3));
-          console.group("[Hummly BPM Debug]");
-          console.log("Notes:", notes.length);
-          console.log("Onsets (s):", onsets.map((t) => +t.toFixed(3)));
-          console.log("IOIs (s):", iois);
-          console.log("IOI range:", iois.length > 0 ? `${Math.min(...iois).toFixed(3)}–${Math.max(...iois).toFixed(3)}` : "N/A");
-          console.log("Detected BPM:", detectedBpm, `(beat period: ${(60 / detectedBpm).toFixed(3)}s)`);
-          console.log("Beat offset:", beatOffset.toFixed(3), "s");
-          console.table(notes.map((n) => ({ note: n.name, onset: +n.startTime.toFixed(3), dur: +n.duration.toFixed(3) })));
-          console.groupEnd();
-        }
-
-        // Stage 4: Generate chords
-        setStage(4);
-        await delay(400);
-        const chordOptions = generateChordProgressions(key);
-
-        // Stage 5: Prepare drums
-        setStage(5);
-        await delay(400);
-        const drumOptions = DRUM_STYLES;
-
-        onComplete(notes, key, chordOptions, drumOptions, detectedBpm, beatOffset);
-      } catch {
-        onError("Analysis failed. Please try recording again.");
-      }
-    }
-
-    process();
-  }, [readings, onComplete, onError]);
-
-  return (
-    <div className="flex flex-col items-center gap-8 py-8">
-      <div className="w-16 h-16 rounded-full border-4 border-neon-purple border-t-transparent animate-spin" />
-
-      <div className="flex flex-col gap-3 w-full max-w-sm">
-        {STAGES.map((label, i) => (
-          <div key={i} className="flex items-center gap-3">
-            <div
-              className={`w-5 h-5 rounded-full flex items-center justify-center text-xs transition-all ${
-                i < stage
-                  ? "bg-neon-green text-black"
-                  : i === stage
-                    ? "bg-neon-purple text-white animate-pulse"
-                    : "bg-surface-card text-text-secondary"
-              }`}
-            >
-              {i < stage ? "\u2713" : i + 1}
-            </div>
-            <span
-              className={`text-sm transition-colors ${
-                i <= stage ? "text-text-primary" : "text-text-secondary"
-              }`}
-            >
-              {label}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+// Yield a paint opportunity, without inventing a minimum processing duration.
+function nextPaint() {
+  return new Promise<void>((resolve) => {
+    if (document.visibilityState === "hidden") setTimeout(resolve, 0);
+    else requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+export default function ProcessingStep({ readings, voicePcm, onComplete, onError }: Props) {
+  const [stage, setStage] = useState(0);
+  const [notes, setNotes] = useState<QuantizedNote[]>([]);
+  const [detectedKey, setDetectedKey] = useState<KeyResult | null>(null);
+  const [chords, setChords] = useState<ChordProgression | null>(null);
+  const [rhythmReady, setRhythmReady] = useState(false);
+  const peaks = useMemo(() => voicePcm ? computePeaks(voicePcm.channels[0], 0, voicePcm.channels[0].length, 80) : [], [voicePcm]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function process() {
+      try {
+        await nextPaint();
+        if (cancelled) return;
+        const extracted = quantizeNotes(readings);
+        if (!extracted.length) {
+          onError("We didn’t catch a clear melody yet. Your recording is still here. Try again, or hum a little closer to the microphone.");
+          return;
+        }
+        setNotes(extracted);
+        setStage(1);
+        await nextPaint();
+        if (cancelled) return;
+        const key = detectKey(extracted);
+        setDetectedKey(key);
+        setStage(2);
+        await nextPaint();
+        if (cancelled) return;
+        const bpm = detectBpmFromNotes(extracted);
+        setStage(3);
+        await nextPaint();
+        if (cancelled) return;
+        const offset = detectBeatOffset(extracted, bpm);
+        setStage(4);
+        await nextPaint();
+        if (cancelled) return;
+        const options = generateChordProgressions(key);
+        setChords(options[0] ?? null);
+        setStage(5);
+        await nextPaint();
+        if (cancelled) return;
+        const drums = DRUM_STYLES;
+        setRhythmReady(true);
+        setStage(6);
+        await nextPaint();
+        if (!cancelled) onComplete(extracted, key, options, drums, bpm, offset);
+      } catch {
+        if (!cancelled) onError("That melody needs another listen. Your recording is safe—try the analysis again.");
+      }
+    }
+    void process();
+    return () => { cancelled = true; };
+  }, [readings, onComplete, onError]);
+
+  const minPitch = notes.length ? Math.min(...notes.map((n) => n.midiNote)) : 0;
+  return (
+    <section className="transform-layout" aria-labelledby="transform-title" aria-busy="true">
+      <p className="eyebrow" style={{ justifyContent: "center" }}>A little hum becomes something</p>
+      <h1 id="transform-title">Finding your melody’s magic.</h1>
+      <p className="transform-status" role="status">{stage === 6 ? "Your musical choices are ready" : `${STAGES[stage]}…`}</p>
+      <Hummi state="singing" size="small" />
+      <Surface className="transform-stage">
+        {notes.length ? <div className="transform-notes" aria-label={`${notes.length} notes found`}>
+          {notes.slice(0, 24).map((note, i) => <div key={i} style={{ width: `${Math.min(92, 44 + note.duration * 24)}px`, marginBottom: `${Math.min(36, (note.midiNote - minPitch) * 3)}px` }}><MusicalBlock className="transform-note" color={detectedKey ? chordVisual({ name: note.name, symbol: note.name, notes: [note.midiNote] }, detectedKey).color : "lavender"}>{note.name}</MusicalBlock></div>)}
+          {notes.length > 24 && <span className="text-xs">+{notes.length - 24} notes</span>}
+        </div> : <svg viewBox="0 0 600 100" className="w-full h-20" role="img" aria-label="Your captured waveform">
+          {Array.from("max" in peaks ? peaks.max : [], (peak, i) => <path key={i} d={`M${i * 7.5 + 3} ${50 - Math.max(2, peak * 46)}v${Math.max(4, peak * 92)}`} stroke="var(--ink)" strokeWidth="4" strokeLinecap="round" />)}
+        </svg>}
+        {chords && <div className="transform-harmony" aria-label="Suggested chords">{chords.chords.map((chord, i) => <span key={i}>{chord.name}</span>)}</div>}
+        {rhythmReady && <p className="text-xs text-text-secondary">Rhythm choices ready to try</p>}
+      </Surface>
+      <details className="transform-details"><summary>What’s happening?</summary><ol>{STAGES.map((label, i) => <li key={label}>{i < stage ? "✓ " : i === stage ? "Now: " : "Next: "}{label}</li>)}</ol></details>
+    </section>
+  );
 }
