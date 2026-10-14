@@ -339,7 +339,7 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
   return (
     <div className="flex flex-col items-center gap-6 py-4">
       <div className="flex items-center justify-center gap-3 w-full min-w-0 mb-2">
-        <Hummi state="dancing" size="small" animated={celebrating} />
+        <Hummi state={isPlaying ? "dj" : celebrating ? "group-dance" : "headphones"} size="small" priority />
         <div className="min-w-0">
         <h1 className="demo-title">Your demo is ready.</h1>
         <p className="demo-description mt-1">That little hum became something.</p>

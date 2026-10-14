@@ -167,10 +167,6 @@ export default function ReviewStep({
     }
   }, [isPlaying, stopPlayback, startPlayback]);
 
-  const voiceDuration = voicePcm
-    ? voicePcm.channels[0].length / voicePcm.sampleRate
-    : 0;
-
   return (
     <div className="flex flex-col items-center gap-6">
       <div className="text-center"><p className="field-label">Detected key</p><p className="music-data">{detectedKey.key} {detectedKey.mode}</p></div>
@@ -180,8 +176,10 @@ export default function ReviewStep({
         {isPlaying && <div className="flex gap-2" aria-hidden="true">{Array.from({ length: beatsPerBar }, (_, i) => <span key={i} className={`review-beat ${currentBeat === i + 1 ? "is-playing" : ""}`} />)}</div>}
         <p className="phase-hint text-center">{isPlaying ? "Listening… adjust timing if the clicks need a nudge." : "Play to hear your recording with the beat."}</p>
       </div>}
-      <details className="precision-details"><summary>Adjust timing</summary><Surface className="settings-stack">
-        <div><p className="field-label">Tempo</p><div className="tempo-controls">
+      <section className="review-timing" aria-label="Adjust timing"><Surface className="settings-stack timing-settings">
+        <section className="timing-task" aria-labelledby="tempo-task-title">
+        <h2 id="tempo-task-title" className="timing-task-title"><span aria-hidden="true">1</span>Adjust tempo</h2>
+        <div className="tempo-controls">
           <SecondaryButton variant="quiet" className="icon-action" aria-label="Decrease tempo" onClick={() => { stopPlayback(); onBpmChange(Math.max(40, bpm - 1)); }}>−</SecondaryButton>
           <label className="tempo-value">
             <input
@@ -196,15 +194,14 @@ export default function ReviewStep({
             /><span>BPM</span>
           </label>
           <SecondaryButton variant="quiet" className="icon-action" aria-label="Increase tempo" onClick={() => { stopPlayback(); onBpmChange(Math.min(200, bpm + 1)); }}>+</SecondaryButton>
-        </div></div>
+        </div>
         <SelectionGroup label="Beats per bar" value={String(beatsPerBar)} options={[{ value: "3", label: "3 beats" }, { value: "4", label: "4 beats" }]} onChange={(value) => { stopPlayback(); onBeatsPerBarChange(Number(value)); }} />
-        {voicePcm && <>
-          <AlignTimeline voiceDuration={voiceDuration} bpm={bpm} beatsPerBar={beatsPerBar} beatOffset={beatOffset} onChange={onBeatOffsetChange} />
-          <label className="field-label">Beat alignment · {beatOffset.toFixed(2)} seconds
-            <input type="range" aria-label="Beat alignment in seconds" min={-(60 / bpm) * beatsPerBar * 2} max={(60 / bpm) * beatsPerBar * 2} step={0.05} value={beatOffset} onChange={(e) => onBeatOffsetChange(Number(e.target.value))} className="w-full accent-ink" />
-          </label>
-        </>}
-      </Surface></details>
+        </section>
+        {voicePcm && <section className="timing-task timing-task--alignment" aria-labelledby="alignment-task-title">
+          <h2 id="alignment-task-title" className="timing-task-title"><span aria-hidden="true">2</span>Align the start</h2>
+          <AlignTimeline voicePcm={voicePcm} bpm={bpm} beatsPerBar={beatsPerBar} beatOffset={beatOffset} onChange={onBeatOffsetChange} />
+        </section>}
+      </Surface></section>
       <ActionButton onClick={() => { stopPlayback(); onContinue(); }}>Play with chords<Icon name="arrow" /></ActionButton>
     </div>
   );

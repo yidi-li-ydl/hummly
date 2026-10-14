@@ -14,6 +14,7 @@ from skimage.registration import optical_flow_tvl1
 
 ROOT = Path(__file__).resolve().parent.parent
 STATES = {"curious-listening": 3, "unhappy": 2.5, "singing": 3.5,
+          "singing-microphone": 3.5,
           "dancing": 2.8, "group-dance": 3.5, "cool-sunglasses": 3,
           "headphones": 3, "dj": 3.5}
 SIZE, FACTOR, COLS, ROWS = 256, 6, 8, 12

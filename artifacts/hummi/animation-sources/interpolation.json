@@ -78,5 +78,15 @@
     "method": "bidirectional TV-L1 motion interpolation",
     "width": 2048,
     "height": 3072
+  },
+  {
+    "state": "singing-microphone",
+    "frames": 96,
+    "keyPoses": 16,
+    "fps": 27.43,
+    "duration": 3.5,
+    "method": "bidirectional TV-L1 motion interpolation",
+    "width": 2048,
+    "height": 3072
   }
 ]

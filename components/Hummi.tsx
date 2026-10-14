@@ -35,7 +35,7 @@ export default function Hummi(props: HummiProps) {
   return <HummiRenderer key={props.state} {...props} />;
 }
 
-function HummiRenderer({ state, size = "medium", alt, className = "", animated = false, priority = false, frame }: HummiProps) {
+function HummiRenderer({ state, size = "medium", alt, className = "", animated = true, priority = false, frame }: HummiProps) {
   const asset = hummiStates[state];
   const animation = hummiAnimations[state];
   const pixels = sizes[size];

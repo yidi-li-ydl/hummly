@@ -1,242 +1,115 @@
 "use client";
 
-import { useRef, useCallback, useEffect, useState } from "react";
+import { useRef, useMemo, useState } from "react";
+import { computePeaks } from "@/lib/audio/waveformOps";
+import type { VoicePcm } from "@/lib/types";
 
 interface AlignTimelineProps {
-  voiceDuration: number;
+  voicePcm: VoicePcm;
   bpm: number;
   beatsPerBar: number;
   beatOffset: number;
   onChange: (beatOffset: number) => void;
   disabled?: boolean;
 }
-
-function snap50ms(v: number): number {
-  return Math.round(v * 20) / 20;
-}
-
 type DragTarget = "voice" | "beats";
+const snap = (value: number) => Math.round(value * 20) / 20;
 
-export default function AlignTimeline({
-  voiceDuration,
-  bpm,
-  beatsPerBar,
-  beatOffset,
-  onChange,
-  disabled,
-}: AlignTimelineProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{
-    target: DragTarget;
-    startX: number;
-    startPos: number;
-    containerWidth: number;
-  } | null>(null);
-  const [dragging, setDragging] = useState<DragTarget | null>(null);
-
+export default function AlignTimeline({ voicePcm, bpm, beatsPerBar, beatOffset, onChange, disabled }: AlignTimelineProps) {
+  const duration = voicePcm.channels[0].length / voicePcm.sampleRate;
   const beatPeriod = 60 / bpm;
-  const barDuration = beatsPerBar * beatPeriod;
-
-  // Timeline has padding so blocks can be dragged beyond voice edges
-  const padding = barDuration * 2;
-  const timelineLength = voiceDuration + padding * 2;
-
-  // Voice position — internal state so both blocks can move independently
-  const [voicePos, setVoicePos] = useState(padding);
-  const voicePosRef = useRef(voicePos);
-  useEffect(() => { voicePosRef.current = voicePos; }, [voicePos]);
-
-  // Beats position is derived from voice position + offset
+  const padding = beatsPerBar * beatPeriod * 2;
+  const length = duration + padding * 2;
+  // Store displacement from the default position so tempo changes keep the
+  // voice centered without resetting an alignment the user has adjusted.
+  const [voiceShift, setVoiceShift] = useState(0);
+  const voicePos = Math.max(0, Math.min(padding + voiceShift, padding * 2));
   const beatsPos = voicePos + beatOffset;
+  const trackRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ target: DragTarget; x: number; voice: number; beats: number; width: number; pointer: number } | null>(null);
+  const [dragging, setDragging] = useState<DragTarget | null>(null);
+  const peaks = useMemo(() => computePeaks(voicePcm.channels[0], 0, voicePcm.channels[0].length, 180), [voicePcm]);
+  const path = useMemo(() => {
+    const peak = Math.max(0.01, ...peaks.max, ...Array.from(peaks.min, v => -v));
+    return Array.from(peaks.max, (value, i) => `M${i + .5} ${24 - value / peak * 20}V${24 - peaks.min[i] / peak * 20}`).join(" ");
+  }, [peaks]);
 
-  // Beat ticks inside the beats block (relative to block, not timeline)
-  const beatTicks: { pct: number; isDownbeat: boolean }[] = [];
-  for (let i = 0; i * beatPeriod < voiceDuration; i++) {
-    beatTicks.push({
-      pct: (i * beatPeriod) / voiceDuration * 100,
-      isDownbeat: i % beatsPerBar === 0,
-    });
+  if (duration <= 0) return null;
+
+  function move(target: DragTarget, position: number, fixedVoice = voicePos, fixedBeats = beatsPos) {
+    const next = snap(Math.max(0, Math.min(position, padding * 2)));
+    if (target === "voice") {
+      setVoiceShift(next - padding);
+      onChange(snap(fixedBeats - next));
+    } else onChange(snap(next - fixedVoice));
   }
 
-  // Time ruler — pick a sensible interval
-  const rulerInterval = timelineLength > 30 ? 10 : timelineLength > 10 ? 5 : barDuration;
-  const rulerTicks: { pct: number; label: string }[] = [];
-  for (let t = 0; t <= timelineLength; t += rulerInterval) {
-    rulerTicks.push({
-      pct: (t / timelineLength) * 100,
-      label: `${Math.round(t)}s`,
-    });
+  function start(target: DragTarget, e: React.PointerEvent<HTMLDivElement>) {
+    if (disabled || (e.pointerType === "mouse" && e.button !== 0)) return;
+    const width = trackRef.current?.getBoundingClientRect().width;
+    if (!width) return;
+    dragRef.current = { target, x: e.clientX, voice: voicePos, beats: beatsPos, width, pointer: e.pointerId };
+    setDragging(target);
+    e.currentTarget.setPointerCapture(e.pointerId);
   }
 
-  const onPointerDown = useCallback(
-    (target: DragTarget, e: React.PointerEvent) => {
-      if (disabled) return;
-      const container = containerRef.current;
-      if (!container) return;
+  function end() { dragRef.current = null; setDragging(null); }
 
-      const currentPos = target === "voice"
-        ? voicePosRef.current
-        : voicePosRef.current + beatOffset;
+  function keyboard(target: DragTarget, e: React.KeyboardEvent<HTMLDivElement>) {
+    if (disabled) return;
+    const current = target === "voice" ? voicePos : beatsPos;
+    const step = e.shiftKey ? beatPeriod : .05;
+    const next = e.key === "ArrowLeft" || e.key === "ArrowDown" ? current - step
+      : e.key === "ArrowRight" || e.key === "ArrowUp" ? current + step
+      : e.key === "Home" ? 0 : e.key === "End" ? padding * 2 : null;
+    if (next === null) return;
+    e.preventDefault();
+    move(target, next);
+  }
 
-      dragRef.current = {
-        target,
-        startX: e.clientX,
-        startPos: currentPos,
-        containerWidth: container.getBoundingClientRect().width,
-      };
-      setDragging(target);
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    },
-    [disabled, beatOffset]
-  );
-
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent) => {
-      const drag = dragRef.current;
-      if (!drag) return;
-
-      const deltaX = e.clientX - drag.startX;
-      const deltaSeconds = (deltaX / drag.containerWidth) * timelineLength;
-      const raw = drag.startPos + deltaSeconds;
-      const clamped = Math.max(0, Math.min(raw, timelineLength - voiceDuration));
-      const snapped = snap50ms(clamped);
-
-      if (drag.target === "voice") {
-        // Move voice, keep beats visually in place → offset changes
-        const currentBeatsPos = voicePosRef.current + beatOffset;
-        const newOffset = snap50ms(currentBeatsPos - snapped);
-        setVoicePos(snapped);
-        voicePosRef.current = snapped;
-        onChange(newOffset);
-      } else {
-        // Move beats, voice stays → offset changes
-        const newOffset = snap50ms(snapped - voicePosRef.current);
-        onChange(newOffset);
-      }
-    },
-    [beatOffset, timelineLength, voiceDuration, onChange]
-  );
-
-  const onPointerUp = useCallback(() => {
-    dragRef.current = null;
-    setDragging(null);
-  }, []);
-
-  useEffect(() => {
-    return () => { dragRef.current = null; };
-  }, []);
-
-  if (voiceDuration <= 0) return null;
-
-  const blockWidthPct = (voiceDuration / timelineLength) * 100;
-  const voiceLeftPct = (voicePos / timelineLength) * 100;
-  const beatsLeftPct = (beatsPos / timelineLength) * 100;
+  const interval = length > 30 ? 10 : length > 10 ? 5 : 1;
+  const ticks = Array.from({ length: Math.floor(length / interval) + 1 }, (_, i) => i * interval);
+  const beats = Array.from({ length: Math.ceil(duration / beatPeriod) }, (_, i) => i);
 
   return (
-    <div className="w-full max-w-md mx-auto select-none">
-      <p className="text-text-secondary text-xs mb-2 text-center">
-        Drag to align voice and beats
-      </p>
-
-      <div
-        ref={containerRef}
-        className="relative pt-6"
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-      >
-        {/* Time ruler */}
-        <div className="relative h-4 mb-2">
-          {rulerTicks.map((tick, i) => (
-            <div
-              key={i}
-              className="absolute top-0 flex flex-col items-center -translate-x-1/2"
-              style={{ left: `${tick.pct}%` }}
-            >
-              <span className="text-xs text-text-muted font-mono">
-                {tick.label}
-              </span>
-              <div className="w-px h-1.5 bg-ink/15 mt-0.5" />
-            </div>
-          ))}
+    <div className="alignment-workspace">
+      <p className="phase-hint">Match the Beats start to Voice in the first row. Drag either track to adjust.</p>
+      <div className="alignment-grid">
+        <div aria-hidden="true" />
+        <div className="alignment-ruler" aria-hidden="true">
+          {ticks.map(t => <span key={t} style={{ left: `${t / length * 100}%` }}>{t}s</span>)}
         </div>
-
-        {/* Tracks */}
-        <div className="flex flex-col gap-2">
-          {/* Voice track */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium w-10 text-right shrink-0 text-ink">
-              Voice
-            </span>
-            <div className="relative flex-1 h-8 rounded bg-ink/5">
+        {(["voice", "beats"] as const).map(target => {
+          const position = target === "voice" ? voicePos : beatsPos;
+          return <div className="alignment-row" key={target}>
+            <span className="alignment-label">{target === "voice" ? "Voice" : "Beats"}</span>
+            <div className="alignment-track" ref={target === "voice" ? trackRef : undefined}>
               <div
-                onPointerDown={(e) => onPointerDown("voice", e)}
-                className={`absolute top-0.5 bottom-0.5 rounded border bg-ink/30 border-ink ${
-                  disabled
-                    ? "cursor-default opacity-50"
-                    : dragging === "voice"
-                    ? "cursor-grabbing opacity-100"
-                    : "cursor-grab opacity-80 hover:opacity-100"
-                } transition-opacity flex items-center justify-center`}
-                style={{
-                  left: `${voiceLeftPct}%`,
-                  width: `${blockWidthPct}%`,
-                  minWidth: "12px",
+                className={`alignment-clip alignment-clip--${target}${dragging === target ? " is-dragging" : ""}`}
+                style={{ left: `${position / length * 100}%`, width: `${duration / length * 100}%` }}
+                role="slider" tabIndex={disabled ? -1 : 0} aria-disabled={disabled}
+                aria-label={target === "voice" ? "Voice waveform alignment" : "Beat track alignment"}
+                aria-valuemin={0} aria-valuemax={padding * 2} aria-valuenow={position}
+                aria-valuetext={`${target === "voice" ? "Voice" : "Beats"} starts at ${position.toFixed(2)} seconds; beat offset ${beatOffset.toFixed(2)} seconds`}
+                onKeyDown={e => keyboard(target, e)}
+                onPointerDown={e => start(target, e)}
+                onPointerMove={e => {
+                  const drag = dragRef.current;
+                  if (!drag || drag.pointer !== e.pointerId) return;
+                  const initial = drag.target === "voice" ? drag.voice : drag.beats;
+                  move(drag.target, initial + (e.clientX - drag.x) / drag.width * length, drag.voice, drag.beats);
                 }}
+                onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end}
               >
-                <span className="text-xs font-mono text-ink/80 pointer-events-none truncate px-1">
-                  {voiceDuration.toFixed(1)}s
-                </span>
+                <span className="alignment-start" aria-hidden="true" />
+                {target === "voice" ? <svg viewBox="0 0 180 48" preserveAspectRatio="none" aria-hidden="true"><path d={path} fill="none" stroke="currentColor" strokeWidth=".85" /></svg>
+                  : beats.map(i => <span key={i} className={`alignment-beat${i % beatsPerBar === 0 ? " is-downbeat" : ""}`} style={{ left: `${i * beatPeriod / duration * 100}%` }} aria-hidden="true" />)}
               </div>
             </div>
-          </div>
-
-          {/* Beats track */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium w-10 text-right shrink-0 text-ink">
-              Beats
-            </span>
-            <div className="relative flex-1 h-8 rounded bg-ink/5">
-              <div
-                onPointerDown={(e) => onPointerDown("beats", e)}
-                className={`absolute top-0.5 bottom-0.5 rounded border bg-ink/15 border-ink/50 ${
-                  disabled
-                    ? "cursor-default opacity-50"
-                    : dragging === "beats"
-                    ? "cursor-grabbing opacity-100"
-                    : "cursor-grab opacity-80 hover:opacity-100"
-                } transition-opacity overflow-hidden`}
-                style={{
-                  left: `${beatsLeftPct}%`,
-                  width: `${blockWidthPct}%`,
-                  minWidth: "12px",
-                }}
-              >
-                {/* Beat tick marks */}
-                {beatTicks.map((tick, i) => (
-                  <div
-                    key={i}
-                    className={`absolute top-0 ${
-                      tick.isDownbeat
-                        ? "h-full w-0.5 bg-ink"
-                        : "h-1/2 w-px bg-ink/50 mt-auto"
-                    }`}
-                    style={{ left: `${tick.pct}%` }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Offset display */}
-        <p className="text-center mt-3 text-xs tabular-nums text-text-muted">
-          offset{" "}
-          <span className="text-ink font-mono">
-            {beatOffset === 0 ? "0" : (beatOffset > 0 ? "+" : "") + beatOffset.toFixed(2)}s
-          </span>
-        </p>
+          </div>;
+        })}
       </div>
+      <p className="alignment-offset">Beats {beatOffset === 0 ? "aligned with voice" : `${Math.abs(beatOffset).toFixed(2)}s ${beatOffset > 0 ? "after" : "before"} voice`}</p>
     </div>
   );
 }

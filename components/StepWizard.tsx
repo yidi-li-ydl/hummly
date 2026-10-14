@@ -195,7 +195,6 @@ export default function StepWizard() {
       {state.step === "processing" && !state.error && (
         <ProcessingStep
           readings={state.pitchReadings}
-          voicePcm={state.voicePcm}
           onComplete={handleProcessingComplete}
           onError={handleProcessingError}
         />
@@ -203,7 +202,7 @@ export default function StepWizard() {
 
       {state.step === "review" && state.detectedKey && (
         <section className="work-panel">
-          <div className="work-heading"><p className="eyebrow">Play with your music</p><h1>Your melody, found.</h1><p>Have a listen. Adjust the timing if it needs a little nudge.</p></div>
+          <div className="work-heading"><h1>Your melody, found.</h1></div>
         <ReviewStep
           detectedKey={state.detectedKey}
           bpm={state.bpm}
@@ -220,7 +219,7 @@ export default function StepWizard() {
 
       {state.step === "chords" && state.detectedKey && (
         <section className="work-panel">
-          <div className="work-heading"><p className="eyebrow">Play with your music</p><h1>Give it a feeling.</h1><p>Try some chords. Hear what makes your melody yours.</p></div>
+          <div className="work-heading"><h1>Your hum, meet your chords.</h1><p>We found a few chord progressions that might fit your melody.</p></div>
         <ChordStep
           options={state.chordOptions}
           detectedKey={state.detectedKey}
@@ -233,7 +232,7 @@ export default function StepWizard() {
       )}
 
       {state.step === "drums" && <section className="work-panel">
-        <div className="work-heading"><p className="eyebrow">Play with your music</p><h1>Find your groove.</h1><p>Try a beat, or keep it simple.</p></div>
+        <div className="work-heading"><p className="eyebrow">Find beats</p><h1>Find your groove.</h1><p>Try a beat, or keep it simple.</p></div>
         <DrumStep options={state.drumOptions} beatsPerBar={state.beatsPerBar} bpm={state.bpm} onSelect={handleDrumSelect} onSkip={handleDrumSkip} />
       </section>}
 

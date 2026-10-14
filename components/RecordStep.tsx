@@ -161,7 +161,6 @@ export default function RecordStep({ onComplete }: Props) {
     <section className="record-layout" aria-labelledby="record-title">
       <div className="record-copy">
         <div className="record-intro">
-          <p className="eyebrow">Your melody starts here</p>
           <h1 id="record-title">Got a tune<br />in your <em>head?</em></h1>
           <p className="record-description">Hum a little. Let’s see where it goes.<br />We’ll find its chords and rhythm together.</p>
         </div>
@@ -184,17 +183,13 @@ export default function RecordStep({ onComplete }: Props) {
         </div>
       </div>
       <div className={`music-stage ${recording ? "is-recording" : ""}`}>
-        <div className="stage-caption" role="status">
-          {recording ? <span className="recording-dot" /> : <Icon name="spark" />}
-          {recording ? "Recording · I’m listening" : phase === "requesting" ? "Waiting for microphone access" : phase === "uploading" ? "Reading your melody" : "Meet your creative sidekick"}
-        </div>
+        {phase !== "idle" && <div className="stage-caption" role="status">
+          {recording && <span className="recording-dot" />}
+          {recording ? "Recording · I’m listening" : phase === "requesting" ? "Waiting for microphone access" : "Reading your melody"}
+        </div>}
         {recording && <span className="stage-counter">{formatTime(elapsed)} / 0:30</span>}
-        {phase === "idle" && <>
-          <Icon name="spark" className="stage-detail stage-detail-spark" />
-          <Icon name="note" className="stage-detail stage-detail-note" />
-        </>}
-        <div className="stage-hummi"><Hummi state="curious-listening" size="large" animated={!recording && !pending} priority /></div>
-        <p className="stage-message">{recording ? "That’s it. Make it your own." : pending ? "Your little tune is on its way." : "Every hum deserves to become something."}</p>
+        <div className="stage-hummi"><Hummi state={recording || pending ? "headphones" : "singing"} size="large" priority /></div>
+        <p className={`stage-message${phase === "idle" ? " stage-message--caption" : ""}`}>{recording ? "That’s it. Make it your own." : pending ? "Your little tune is on its way." : "Every hum deserves to become something."}</p>
         {recording ? <>
           <Surface className="recording-canvas"><WaveformVisualizer analyserNode={analyserNode} isActive /></Surface>
           <span className="note-detail">{currentNote ? `Pitch detected · ${currentNote}` : "Hum a clear, steady melody"}</span>

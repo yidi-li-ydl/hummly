@@ -12,6 +12,7 @@ type Props = {
   selected: boolean;
   recommended: boolean;
   phase: "pick-a" | "pick-b";
+  sectionBars: number;
   bpm: number;
   previewPhase: "loading" | "playing" | null;
   playingChord: number | null;
@@ -21,17 +22,17 @@ type Props = {
   onSelect: () => void;
 };
 
-export default function ProgressionModule({ progression, detectedKey, selected, recommended, phase, bpm, previewPhase, playingChord, auditionedChord, onPreview, onAudition, onSelect }: Props) {
+export default function ProgressionModule({ progression, detectedKey, selected, recommended, phase, sectionBars, bpm, previewPhase, playingChord, auditionedChord, onPreview, onAudition, onSelect }: Props) {
   const notation = progression.description.replace(/^.*?:\s*/, "");
   return (
-    <Surface as="article" level={selected ? "active" : "soft"} aria-label={`${progression.name} progression`} style={{ "--musical-beat": `${60 / bpm}s` } as CSSProperties}>
+    <Surface as="article" className="chord-progression" level={selected ? "active" : "soft"} aria-label={`${progression.name} progression`} style={{ "--musical-beat": `${60 / bpm}s` } as CSSProperties}>
       <div className="progression-header">
         <div>
           <h2 className="progression-name">{progression.name}</h2>
           <p className="progression-notation">{notation}</p>
           {(selected || recommended) && <div className="progression-badges">
-            {selected && <span className="state-label">Verse selected</span>}
-            {recommended && <span className="state-label">Recommended chorus</span>}
+            {selected && <span className="state-label">First {sectionBars} bars selected</span>}
+            {recommended && <span className="state-label">Recommended next</span>}
           </div>}
         </div>
         <SecondaryButton
@@ -51,7 +52,7 @@ export default function ProgressionModule({ progression, detectedKey, selected, 
       </div>
       <div className="progression-footer">
         <span className="progression-tip">Tap a chord to hear it.</span>
-        <SecondaryButton variant="quiet" disabled={selected} aria-label={`Use ${progression.name}${phase === "pick-b" ? " for the chorus" : " for the verse"}`} onClick={onSelect}>{selected ? "Verse selected" : phase === "pick-b" ? "Use for chorus" : "Use for verse"}</SecondaryButton>
+        <SecondaryButton variant="quiet" disabled={selected} aria-label={`Use ${progression.name} for the ${phase === "pick-b" ? "next" : "first"} ${sectionBars} bars`} onClick={onSelect}>{selected ? "Selected" : `Use for ${phase === "pick-b" ? "next" : "first"} ${sectionBars} bars`}{!selected && <Icon name="arrow" />}</SecondaryButton>
       </div>
       {previewPhase && <p className="phase-hint" role="status">{previewPhase === "loading" ? "Loading sounds…" : playingChord === null ? "Finishing preview…" : `Playing ${progression.chords[playingChord]?.name ?? "chord"}`}</p>}
     </Surface>
