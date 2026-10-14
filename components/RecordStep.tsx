@@ -29,9 +29,10 @@ function formatTime(seconds: number): string {
 
 interface Props {
   onComplete: (pcm: VoicePcm, readings: PitchReading[]) => void;
+  analyzing?: boolean;
 }
 
-export default function RecordStep({ onComplete }: Props) {
+export default function RecordStep({ onComplete, analyzing = false }: Props) {
   const [phase, setPhase] = useState<"idle" | "requesting" | "recording" | "uploading">("idle");
   const [elapsed, setElapsed] = useState(0);
   const [currentNote, setCurrentNote] = useState<string | null>(null);
@@ -72,7 +73,7 @@ export default function RecordStep({ onComplete }: Props) {
 
   const stopRecordingRef = useRef<(() => void) | null>(null);
   const startRecording = async () => {
-    if (busyRef.current) return;
+    if (busyRef.current || analyzing) return;
     busyRef.current = true;
     setPhase("requesting");
     setError(null);
@@ -124,7 +125,7 @@ export default function RecordStep({ onComplete }: Props) {
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || busyRef.current) return;
+    if (!file || busyRef.current || analyzing) return;
     e.target.value = "";
     busyRef.current = true;
     let audioCtx: AudioContext | null = null;
@@ -156,9 +157,9 @@ export default function RecordStep({ onComplete }: Props) {
   };
 
   const recording = phase === "recording";
-  const pending = phase === "requesting" || phase === "uploading";
+  const pending = analyzing || phase === "requesting" || phase === "uploading";
   return (
-    <section className="record-layout" aria-labelledby="record-title">
+    <section className="record-layout" aria-labelledby="record-title" aria-busy={analyzing}>
       <div className="record-copy">
         <div className="record-intro">
           <h1 id="record-title">Got a tune<br />in your <em>head?</em></h1>
@@ -173,10 +174,10 @@ export default function RecordStep({ onComplete }: Props) {
               disabled={pending}
             >
               <Icon name={recording ? "stop" : "mic"} />
-              {recording ? "Stop & hear it" : phase === "requesting" ? "Connecting microphone…" : phase === "uploading" ? "Opening your audio…" : "Start humming"}
+              <span role={analyzing ? "status" : undefined}>{analyzing ? "Analyzing…" : recording ? "Stop & hear it" : phase === "requesting" ? "Connecting microphone…" : phase === "uploading" ? "Opening your audio…" : "Start humming"}</span>
               {!recording && !pending && <Icon name="arrow" className="action-arrow" />}
             </ActionButton>
-            {phase === "idle" && <SecondaryButton variant="outline" onClick={() => fileInputRef.current?.click()}><Icon name="upload" /> Upload audio</SecondaryButton>}
+            {(phase === "idle" || analyzing) && <SecondaryButton variant="outline" disabled={analyzing} onClick={() => fileInputRef.current?.click()}><Icon name="upload" /> Upload audio</SecondaryButton>}
           </div>
           <p className="record-hint">{recording ? "Keep humming. Tap stop when you’re ready." : "Up to 30 seconds of recording. No music theory needed."}</p>
           {error && <p className="recovery-message" role="alert">{error}</p>}

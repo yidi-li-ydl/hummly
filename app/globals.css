@@ -104,6 +104,7 @@ h1[tabindex="-1"]:focus { outline: none; }
 .precision-details { width: 100%; border: 0; padding: 0; }
 .precision-details summary { padding: var(--space-3) 0; font-size: 15px; font-weight: 500; min-height: 48px; color: var(--text-secondary); }
 .precision-details > div { padding: var(--space-3) 0; }
+.precision-details > .surface { padding: var(--space-4); }
 .settings-stack { display: flex; flex-direction: column; gap: var(--space-4); }
 .review-timing { width: 100%; min-width: 0; }
 .review-timing > .timing-settings { padding: var(--space-4); }

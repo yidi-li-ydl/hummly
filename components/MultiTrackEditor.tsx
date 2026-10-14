@@ -186,7 +186,7 @@ export default function MultiTrackEditor({
   }, [activeTrackId, trackStates]);
 
   return (
-    <div className="w-full flex flex-col gap-2">
+    <div className="w-full min-w-0 flex flex-col gap-2">
       <WaveformToolbar
         hasSelection={activeState?.selection !== null}
         hasHistory={(activeState?.history.length ?? 0) > 0}
@@ -199,7 +199,7 @@ export default function MultiTrackEditor({
         onUndo={handleUndo}
       />
 
-      <div className="rounded-lg border border-surface-soft overflow-hidden bg-ink">
+      <div className="rounded-lg overflow-hidden bg-cream">
         <div className="flex">
           {/* Track headers */}
           <div className="flex flex-col shrink-0" style={{ width: 80 }}>
@@ -228,7 +228,7 @@ export default function MultiTrackEditor({
           </div>
 
           {/* Shared scroll area */}
-          <div className="flex-1 overflow-x-auto" ref={scrollContainerRef}>
+          <div className="flex-1 min-w-0 overflow-x-auto" ref={scrollContainerRef}>
             <div className="flex flex-col">
               {tracks.map((track) => {
                 const state = trackStates[track.id];

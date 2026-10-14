@@ -49,5 +49,5 @@ export default function ProcessingStep({ readings, onComplete, onError }: Props)
     };
   }, [readings, onComplete, onError]);
 
-  return <p className="text-center text-text-secondary" role="status">Getting your melody ready to play…</p>;
+  return null;
 }

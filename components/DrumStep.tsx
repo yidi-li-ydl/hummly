@@ -5,7 +5,7 @@ import { previewDrums } from "@/lib/audio/mixer";
 import useAudioPreview from "@/hooks/useAudioPreview";
 import Icon from "./Icon";
 import Surface from "./ui/Surface";
-import SelectionGroup from "./ui/SelectionGroup";
+import CompactSelect from "./ui/CompactSelect";
 import SecondaryButton from "./ui/SecondaryButton";
 import type { DrumKit, DrumStyle } from "@/lib/types";
 
@@ -36,9 +36,7 @@ export default function DrumStep({ options, beatsPerBar, bpm, onSelect, onSkip }
   };
   return (
     <div className="settings-stack">
-      <details className="precision-details"><summary>Choose a drum sound</summary><div>
-        <SelectionGroup label="Drum sound" value={selectedKit} options={DRUM_KITS.map((kit) => ({ value: kit.id, label: kit.label, description: kit.description }))} onChange={(value) => { preview.stop(); setSelectedKit(value); }} />
-      </div></details>
+      <CompactSelect label="Drum sound" value={selectedKit} options={DRUM_KITS.map((kit) => ({ value: kit.id, label: kit.label }))} onChange={(value) => { preview.stop(); setSelectedKit(value); }} />
       <SecondaryButton onClick={() => { preview.stop(); onSkip(); }}>Skip — no drums</SecondaryButton>
       {preview.error && <p className="recovery-message" role="alert">{preview.error}</p>}
       <div className="progression-list">

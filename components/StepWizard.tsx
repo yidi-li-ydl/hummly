@@ -100,7 +100,7 @@ export default function StepWizard() {
   const wizardRef = useRef<HTMLDivElement>(null);
   const previousStep = useRef(state.step);
   useEffect(() => {
-    if (previousStep.current !== state.step || state.error) {
+    if ((previousStep.current !== state.step && state.step !== "processing") || state.error) {
       const heading = wizardRef.current?.querySelector<HTMLElement>("h1");
       if (heading) { heading.tabIndex = -1; heading.focus(); }
     }
@@ -177,7 +177,7 @@ export default function StepWizard() {
 
   return (
     <div className="wizard" ref={wizardRef}>
-      <StepIndicator currentStep={state.step} />
+      <StepIndicator currentStep={state.step === "processing" && !state.error ? "record" : state.step} />
 
       {state.error && (
         <div className="work-panel recovery-message" role="alert">
@@ -188,8 +188,8 @@ export default function StepWizard() {
         </div>
       )}
 
-      {state.step === "record" && (
-        <RecordStep onComplete={handleRecordComplete} />
+      {(state.step === "record" || state.step === "processing") && !state.error && (
+        <RecordStep onComplete={handleRecordComplete} analyzing={state.step === "processing"} />
       )}
 
       {state.step === "processing" && !state.error && (
