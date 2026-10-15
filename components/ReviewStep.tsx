@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
+import { analyzeAudioBeats } from "@/lib/audio/beatDetector";
 import AlignTimeline from "./AlignTimeline";
 import Icon from "./Icon";
 import ActionButton from "./ui/ActionButton";
@@ -33,6 +34,7 @@ export default function ReviewStep({
   onContinue,
 }: Props) {
   const [isPlaying, setIsPlaying] = useState(false);
+  const audioBeats = useMemo(() => voicePcm ? analyzeAudioBeats(voicePcm) : null, [voicePcm]);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const voiceSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const clickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -184,12 +186,12 @@ export default function ReviewStep({
           <label className="tempo-value">
             <input
               type="text"
-              inputMode="numeric"
+              inputMode="decimal"
               aria-label="Tempo in beats per minute"
               value={bpmFocused ? bpmDraft : String(bpm)}
               onFocus={(e) => { setBpmDraft(String(bpm)); setBpmFocused(true); e.target.select(); }}
-              onChange={(e) => setBpmDraft(e.target.value.replace(/[^0-9]/g, ""))}
-              onBlur={() => { setBpmFocused(false); const value = parseInt(bpmDraft, 10); if (!isNaN(value)) { stopPlayback(); onBpmChange(Math.max(40, Math.min(200, value))); } }}
+              onChange={(e) => setBpmDraft(e.target.value.replace(/[^0-9.]/g, ""))}
+              onBlur={() => { setBpmFocused(false); const value = parseFloat(bpmDraft); if (!isNaN(value)) { stopPlayback(); onBpmChange(Math.max(40, Math.min(200, value))); } }}
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
             /><span>BPM</span>
           </label>
@@ -199,7 +201,7 @@ export default function ReviewStep({
         </section>
         {voicePcm && <section className="timing-task timing-task--alignment" aria-labelledby="alignment-task-title">
           <h2 id="alignment-task-title" className="timing-task-title"><span aria-hidden="true">2</span>Align the start</h2>
-          <AlignTimeline voicePcm={voicePcm} bpm={bpm} beatsPerBar={beatsPerBar} beatOffset={beatOffset} onChange={onBeatOffsetChange} />
+          <AlignTimeline voicePcm={voicePcm} bpm={bpm} beatsPerBar={beatsPerBar} beatOffset={beatOffset} onChange={onBeatOffsetChange} onsets={audioBeats?.onsets} />
         </section>}
       </Surface></section>
       <ActionButton onClick={() => { stopPlayback(); onContinue(); }}>Play with chords<Icon name="arrow" /></ActionButton>

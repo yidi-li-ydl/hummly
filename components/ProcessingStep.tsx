@@ -5,10 +5,12 @@ import { quantizeNotes } from "@/lib/audio/noteQuantizer";
 import { detectKey } from "@/lib/audio/keyDetector";
 import { generateChordProgressions } from "@/lib/audio/chordGenerator";
 import { detectBpmFromNotes, detectBeatOffset } from "@/lib/audio/bpmDetector";
+import { analyzeAudioBeats } from "@/lib/audio/beatDetector";
 import { DRUM_STYLES } from "@/lib/audio/drumPatterns";
-import type { PitchReading, QuantizedNote, KeyResult, ChordProgression, DrumStyle } from "@/lib/types";
+import type { PitchReading, QuantizedNote, KeyResult, ChordProgression, DrumStyle, VoicePcm } from "@/lib/types";
 
 interface Props {
+  voicePcm: VoicePcm | null;
   readings: PitchReading[];
   onComplete: (notes: QuantizedNote[], key: KeyResult, chordOptions: ChordProgression[], drumOptions: DrumStyle[], detectedBpm: number, beatOffset: number) => void;
   onError: (error: string) => void;
@@ -22,7 +24,7 @@ function nextPaint() {
   });
 }
 
-export default function ProcessingStep({ readings, onComplete, onError }: Props) {
+export default function ProcessingStep({ readings, voicePcm, onComplete, onError }: Props) {
   useEffect(() => {
     let cancelled = false;
     async function process() {
@@ -35,8 +37,10 @@ export default function ProcessingStep({ readings, onComplete, onError }: Props)
           return;
         }
         const key = detectKey(extracted);
-        const bpm = detectBpmFromNotes(extracted);
-        const offset = detectBeatOffset(extracted, bpm);
+        const audioBeats = voicePcm ? analyzeAudioBeats(voicePcm) : null;
+        const useAudio = audioBeats && audioBeats.confidence >= .5;
+        const bpm = useAudio ? audioBeats.bpm : detectBpmFromNotes(extracted);
+        const offset = useAudio ? audioBeats.offset : detectBeatOffset(extracted, bpm);
         const options = generateChordProgressions(key);
         if (!cancelled) onComplete(extracted, key, options, DRUM_STYLES, bpm, offset);
       } catch {
@@ -47,7 +51,7 @@ export default function ProcessingStep({ readings, onComplete, onError }: Props)
     return () => {
       cancelled = true;
     };
-  }, [readings, onComplete, onError]);
+  }, [readings, voicePcm, onComplete, onError]);
 
   return null;
 }

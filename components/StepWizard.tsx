@@ -1,6 +1,8 @@
 "use client";
 
-import { useReducer, useCallback, useEffect, useRef } from "react";
+import { useReducer, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import Icon from "./Icon";
 import StepIndicator from "./StepIndicator";
 import RecordStep from "./RecordStep";
 import ProcessingStep from "./ProcessingStep";
@@ -10,6 +12,7 @@ import DrumStep from "./DrumStep";
 import MixStep from "./MixStep";
 import ActionButton from "./ui/ActionButton";
 import SecondaryButton from "./ui/SecondaryButton";
+import { stopPreview } from "@/lib/audio/mixer";
 import type {
   HummlyState,
   HummlyAction,
@@ -23,6 +26,7 @@ import type {
   DrumKit,
   DrumStyle,
   MelodyVoice,
+  WizardStep,
 } from "@/lib/types";
 
 const initialState: HummlyState = {
@@ -99,6 +103,7 @@ export default function StepWizard() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const wizardRef = useRef<HTMLDivElement>(null);
   const previousStep = useRef(state.step);
+  const [resumeStep, setResumeStep] = useState<WizardStep | null>(null);
   useEffect(() => {
     if ((previousStep.current !== state.step && state.step !== "processing") || state.error) {
       const heading = wizardRef.current?.querySelector<HTMLElement>("h1");
@@ -116,6 +121,8 @@ export default function StepWizard() {
   }, []);
 
   const handleRecordComplete = useCallback((pcm: VoicePcm, readings: PitchReading[]) => {
+    setResumeStep(null);
+    dispatch({ type: "RESET" });
     dispatch({ type: "SET_VOICE_PCM", pcm });
     dispatch({ type: "SET_PITCH_READINGS", readings });
     dispatch({ type: "SET_STEP", step: "processing" });
@@ -172,12 +179,37 @@ export default function StepWizard() {
   }, []);
 
   const handleStartOver = useCallback(() => {
+    setResumeStep(null);
     dispatch({ type: "RESET" });
   }, []);
 
+  const handleBackToHum = useCallback(() => {
+    stopPreview();
+    setResumeStep(state.step);
+    dispatch({ type: "SET_STEP", step: "record" });
+  }, [state.step]);
+
   return (
     <div className="wizard" ref={wizardRef}>
-      <StepIndicator currentStep={state.step === "processing" && !state.error ? "record" : state.step} />
+      <header className="brand-header">
+        <div className="brand-navigation">
+          <button type="button" className="header-back" aria-label="Back to hum"
+            disabled={state.step === "record" && !state.error} onClick={handleBackToHum}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 12H4m6-6-6 6 6 6" /></svg>
+          </button>
+          <Link href="/" className="wordmark" aria-label="Hummly home">
+            <span className="brand-mark"><Icon name="wave" /></span>hummly<span className="brand-period">.</span>
+          </Link>
+        </div>
+        <StepIndicator currentStep={state.step} />
+      </header>
+      <main id="create" className="creation-main">
+      {state.step === "record" && resumeStep && state.voicePcm && <div className="wizard-navigation">
+        <SecondaryButton onClick={() => {
+          const step = resumeStep;
+          if (step) dispatch({ type: "SET_STEP", step });
+        }}>Continue with previous recording<span aria-hidden="true">→</span></SecondaryButton>
+      </div>}
 
       {state.error && (
         <div className="work-panel recovery-message" role="alert">
@@ -194,6 +226,7 @@ export default function StepWizard() {
 
       {state.step === "processing" && !state.error && (
         <ProcessingStep
+          voicePcm={state.voicePcm}
           readings={state.pitchReadings}
           onComplete={handleProcessingComplete}
           onError={handleProcessingError}
@@ -221,6 +254,11 @@ export default function StepWizard() {
         <section className="work-panel">
           <div className="work-heading"><h1>Your hum, meet your chords.</h1><p>We found a few chord progressions that might fit your melody.</p></div>
         <ChordStep
+          onApplyFirst={progression => dispatch({ type: "SELECT_CHORDS", progression, progressionB: state.selectedChordsB })}
+          savedFirst={state.selectedChords}
+          savedNext={state.selectedChordsB}
+          savedInstrument={state.chordInstrument}
+          savedPattern={state.chordPattern}
           options={state.chordOptions}
           detectedKey={state.detectedKey}
           bpm={state.bpm}
@@ -258,6 +296,7 @@ export default function StepWizard() {
         />
         </section>
       )}
+      </main>
     </div>
   );
 }
