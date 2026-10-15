@@ -125,7 +125,7 @@ export type HummlyAction =
   | { type: "SELECT_CHORDS"; progression: ChordProgression; progressionB: ChordProgression | null }
   | { type: "SET_CHORD_INSTRUMENT"; instrument: ChordInstrument }
   | { type: "SET_DRUM_OPTIONS"; options: DrumStyle[] }
-  | { type: "SELECT_DRUMS"; style: DrumStyle }
+  | { type: "SELECT_DRUMS"; style: DrumStyle | null }
   | { type: "SET_DRUM_KIT"; kit: DrumKit }
   | { type: "SET_CHORD_PATTERN"; pattern: ChordPattern }
   | { type: "SET_MIX"; buffer: AudioBuffer; url: string }

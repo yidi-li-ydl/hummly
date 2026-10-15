@@ -52,6 +52,19 @@ const initialState: HummlyState = {
   error: null,
 };
 
+const PREVIOUS_STEP: Record<WizardStep, WizardStep> = {
+  record: "record",
+  processing: "record",
+  review: "record",
+  chords: "review",
+  drums: "chords",
+  mix: "drums",
+};
+const STEP_LABEL: Record<WizardStep, string> = {
+  record: "Hum", processing: "Analysis", review: "Analysis",
+  chords: "Find chords", drums: "Find beats", mix: "Mix",
+};
+
 function reducer(state: HummlyState, action: HummlyAction): HummlyState {
   switch (action.type) {
     case "SET_STEP":
@@ -171,6 +184,7 @@ export default function StepWizard() {
   }, []);
 
   const handleDrumSkip = useCallback(() => {
+    dispatch({ type: "SELECT_DRUMS", style: null });
     dispatch({ type: "SET_STEP", step: "mix" });
   }, []);
 
@@ -183,18 +197,19 @@ export default function StepWizard() {
     dispatch({ type: "RESET" });
   }, []);
 
-  const handleBackToHum = useCallback(() => {
+  const handleBack = useCallback(() => {
     stopPreview();
-    setResumeStep(state.step);
-    dispatch({ type: "SET_STEP", step: "record" });
+    const previous = PREVIOUS_STEP[state.step];
+    if (previous === "record" && state.step !== "record") setResumeStep(state.step);
+    dispatch({ type: "SET_STEP", step: previous });
   }, [state.step]);
 
   return (
     <div className="wizard" ref={wizardRef}>
       <header className="brand-header">
         <div className="brand-navigation">
-          <button type="button" className="header-back" aria-label="Back to hum"
-            disabled={state.step === "record" && !state.error} onClick={handleBackToHum}>
+          <button type="button" className="header-back" aria-label={`Back to ${STEP_LABEL[PREVIOUS_STEP[state.step]]}`}
+            disabled={state.step === "record" && !state.error} onClick={handleBack}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 12H4m6-6-6 6 6 6" /></svg>
           </button>
           <Link href="/" className="wordmark" aria-label="Hummly home">
@@ -252,7 +267,6 @@ export default function StepWizard() {
 
       {state.step === "chords" && state.detectedKey && (
         <section className="work-panel">
-          <div className="work-heading"><h1>Your hum, meet your chords.</h1><p>We found a few chord progressions that might fit your melody.</p></div>
         <ChordStep
           onApplyFirst={progression => dispatch({ type: "SELECT_CHORDS", progression, progressionB: state.selectedChordsB })}
           savedFirst={state.selectedChords}
@@ -270,8 +284,8 @@ export default function StepWizard() {
       )}
 
       {state.step === "drums" && <section className="work-panel">
-        <div className="work-heading"><p className="eyebrow">Find beats</p><h1>Find your groove.</h1><p>Try a beat, or keep it simple.</p></div>
-        <DrumStep options={state.drumOptions} beatsPerBar={state.beatsPerBar} bpm={state.bpm} onSelect={handleDrumSelect} onSkip={handleDrumSkip} />
+        <div className="work-heading beat-page-heading"><h1>Find your groove.</h1><p>Pick a beat to bring your song to life.</p></div>
+        <DrumStep savedStyle={state.selectedDrums} savedKit={state.drumKit} previewSong={state} options={state.drumOptions} beatsPerBar={state.beatsPerBar} bpm={state.bpm} onSelect={handleDrumSelect} onSkip={handleDrumSkip} />
       </section>}
 
       {state.step === "mix" && state.detectedKey && (

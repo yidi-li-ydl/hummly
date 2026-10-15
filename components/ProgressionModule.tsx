@@ -13,7 +13,7 @@ type Props = {
   phase: "pick-a" | "pick-b";
   sectionBars: number;
   bpm: number;
-  previewPhase: "loading" | "playing" | null;
+  previewPhase: "loading" | "playing" | "paused" | null;
   playingChord: number | null;
   auditionedChord: number | null;
   onPreview: () => void;

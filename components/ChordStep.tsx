@@ -82,52 +82,57 @@ export default function ChordStep({ options, detectedKey, bpm, beatsPerBar, onSe
 
   return (
     <div className="settings-stack chord-discovery">
-      <p className="key-summary">Detected key: <strong>{detectedKey.key} {detectedKey.mode}</strong></p>
-      <ol className="chord-sections" aria-label="Chord sections">
-        <li className={phase === "pick-a" ? "is-current" : "is-complete"} aria-current={phase === "pick-a" ? "step" : undefined}><span className="chord-section-badge" aria-hidden="true">{phase === "pick-a" ? "1" : <svg viewBox="0 0 16 16" fill="none"><path d="m3.5 8 3 3 6-6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>}</span><div className="chord-section-copy"><button type="button" className="chord-section-switch" aria-pressed={phase === "pick-a"} onClick={() => { preview.stop(); setPhase("pick-a"); }}>First {sectionBars} bars</button><small aria-hidden="true" /></div></li>
-        <li className={phase === "pick-b" ? "is-current" : ""} aria-current={phase === "pick-b" ? "step" : undefined}><span className="chord-section-badge" aria-hidden="true">2</span><div className="chord-section-copy"><button type="button" className="chord-section-switch" disabled={!selectedA} aria-pressed={phase === "pick-b"} onClick={() => { preview.stop(); setPhase("pick-b"); }}>Next {sectionBars} bars</button><small>Optional</small></div></li>
-      </ol>
-      {phase === "pick-b" && selectedA && <div className="quiet-actions">
-        <span className="phase-hint">First {sectionBars} bars: {selectedA.name}</span>
+      <header className="chord-context-header">
+        <h1>{phase === "pick-a" ? "Your hum, meet your chords." : "Let's keep it going."}</h1>
+        <p className="chord-context-meta">
+          <span>{detectedKey.key} {detectedKey.mode}</span><span aria-hidden="true">·</span>
+          <span className={`chord-context-pill${phase === "pick-b" ? " is-next" : ""}`}>
+            {phase === "pick-a" ? "First" : "Next"} {sectionBars} bars
+          </span>
+        </p>
+      </header>
+      {phase === "pick-b" && selectedA && <div className="chord-previous-selection">
+        <span className="chord-previous-label"><span aria-hidden="true">✓</span><span>First {sectionBars} bars: {selectedA.name}</span></span>
         <SecondaryButton onClick={() => { preview.stop(); setPhase("pick-a"); }}>Change</SecondaryButton>
       </div>}
-      <section className="chord-customization" aria-labelledby="chord-customization-title">
-        <h2 id="chord-customization-title" className="chord-section-title">Make it sound like you</h2>
+      <section className="chord-exploration" aria-labelledby="chord-exploration-title">
+        <div className="chord-exploration-intro">
+          <h2 id="chord-exploration-title" className="chord-section-title">Try these chords</h2>
+          <p className="phase-hint">Tap a card to choose. Tap ▶ or a chord to listen.</p>
+        </div>
         <div className="chord-sound-selectors">
-          <CompactSelect label="Instrument" value={selectedInstrument} options={INSTRUMENTS.map(inst => ({ value: inst.id, label: inst.label }))} onChange={value => { preview.stop(); setSelectedInstrument(value); }} />
-          <CompactSelect label="Playing Style" value={selectedPattern.name} options={availablePatterns.map(pattern => ({ value: pattern.name, label: pattern.name }))} onChange={name => {
+          <CompactSelect hideLabel label="Instrument" value={selectedInstrument} options={INSTRUMENTS.map(inst => ({ value: inst.id, label: inst.label }))} onChange={value => { preview.stop(); setSelectedInstrument(value); }} />
+          <CompactSelect hideLabel label="Playing Style" value={selectedPattern.name} options={availablePatterns.map(pattern => ({ value: pattern.name, label: pattern.name }))} onChange={name => {
             const pattern = availablePatterns.find(p => p.name === name);
             if (pattern) { preview.stop(); setSelectedPattern(pattern); }
           }} />
         </div>
+        {preview.error && <p className="recovery-message" role="alert">{preview.error}</p>}
+        <div className="progression-list">
+          {displayOptions.map((prog) => {
+            const fullPreview = preview.state?.key === progressionKey(prog.name);
+            const singleIndex = prog.chords.findIndex((_, index) => preview.state?.key === chordKey(prog.name, index));
+            const previewHere = fullPreview || singleIndex >= 0;
+            const playing = previewHere && preview.state?.phase === "playing";
+            return <ProgressionModule
+              key={prog.name}
+              progression={prog}
+              detectedKey={detectedKey}
+              selected={currentSelection?.name === prog.name}
+              recommended={phase === "pick-b" && selectedA?.name !== prog.name && recommended.has(prog.name)}
+              phase={phase}
+              sectionBars={phase === "pick-a" ? prog.chords.length : sectionBars}
+              bpm={bpm}
+              previewPhase={previewHere ? preview.state?.phase ?? null : null}
+              playingChord={playing && preview.state?.step !== null ? fullPreview ? preview.state?.step ?? null : singleIndex : null}
+              auditionedChord={auditioned?.name === prog.name ? auditioned.index : null}
+              onPreview={() => handlePreview(prog)}
+              onAudition={(index) => handleAudition(prog, index)}
+              onSelect={() => handleSelect(prog)}
+            />;
+          })}
+        </div>
       </section>
-      <h2 className="chord-section-title">{phase === "pick-a" ? "Try these chords" : `Choose chords for the next ${sectionBars} bars`}</h2>
-      {preview.error && <p className="recovery-message" role="alert">{preview.error}</p>}
-      <p className="phase-hint">Tap a card to choose. Tap ▶ or a chord to listen.</p>
-      <div className="progression-list">
-        {displayOptions.map((prog) => {
-          const fullPreview = preview.state?.key === progressionKey(prog.name);
-          const singleIndex = prog.chords.findIndex((_, index) => preview.state?.key === chordKey(prog.name, index));
-          const previewHere = fullPreview || singleIndex >= 0;
-          const playing = previewHere && preview.state?.phase === "playing";
-          return <ProgressionModule
-            key={prog.name}
-            progression={prog}
-            detectedKey={detectedKey}
-            selected={currentSelection?.name === prog.name}
-            recommended={phase === "pick-b" && selectedA?.name !== prog.name && recommended.has(prog.name)}
-            phase={phase}
-            sectionBars={phase === "pick-a" ? prog.chords.length : sectionBars}
-            bpm={bpm}
-            previewPhase={previewHere ? preview.state?.phase ?? null : null}
-            playingChord={playing && preview.state?.step !== null ? fullPreview ? preview.state?.step ?? null : singleIndex : null}
-            auditionedChord={auditioned?.name === prog.name ? auditioned.index : null}
-            onPreview={() => handlePreview(prog)}
-            onAudition={(index) => handleAudition(prog, index)}
-            onSelect={() => handleSelect(prog)}
-          />;
-        })}
-      </div>
       <details className="chord-harmony-entry">
         <summary>Explore a different key or mood <span aria-hidden="true">→</span></summary>
         <div className="settings-stack">
@@ -136,9 +141,9 @@ export default function ChordStep({ options, detectedKey, bpm, beatsPerBar, onSe
           <p className="phase-hint">{filter === detectedKey.mode ? "Your detected key" : filter === "major" ? "Exploring the relative major key" : "Exploring the relative minor key"}. Progressions can contain both major and minor chords.</p>
         </div>
       </details>
-      <div className="quiet-actions">
-        {phase === "pick-b" && selectedA && <SecondaryButton onClick={() => { preview.stop(); onSelect(selectedA, null, selectedInstrument, selectedPattern); }}>Keep the same chords →</SecondaryButton>}
-      </div>
+      {phase === "pick-b" && selectedA && <div className="quiet-actions">
+        <SecondaryButton onClick={() => { preview.stop(); onSelect(selectedA, null, selectedInstrument, selectedPattern); }}>Keep the same chords →</SecondaryButton>
+      </div>}
       <div className="chord-sticky-action">
         <ActionButton disabled={!currentSelection} onClick={handleContinue}>
           {phase === "pick-a" ? `Continue to next ${sectionBars} bars` : "Continue to Find Beats"}<Icon name="arrow" />

@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { previewDrums } from "@/lib/audio/mixer";
+import { useState, useEffect, useRef } from "react";
+import { previewDrums, renderMix, ensureToneStarted } from "@/lib/audio/mixer";
 import useAudioPreview from "@/hooks/useAudioPreview";
+import MiniBeatBars from "./MiniBeatBars";
+import ActionButton from "./ui/ActionButton";
 import Icon from "./Icon";
 import Surface from "./ui/Surface";
 import CompactSelect from "./ui/CompactSelect";
 import SecondaryButton from "./ui/SecondaryButton";
-import type { DrumKit, DrumStyle } from "@/lib/types";
+import type { DrumKit, DrumStyle, HummlyState } from "@/lib/types";
 
 const DRUM_KITS: { id: DrumKit; label: string; description: string }[] = [
   { id: "acoustic-kit", label: "Acoustic", description: "Natural drum kit" },
@@ -23,44 +25,88 @@ interface Props {
   bpm: number;
   onSelect: (style: DrumStyle, kit: DrumKit) => void;
   onSkip: () => void;
+  savedStyle?: DrumStyle | null;
+  savedKit?: DrumKit;
+  previewSong?: Pick<HummlyState, "notes" | "selectedChords" | "selectedChordsB" | "voicePcm" | "pitchReadings" | "detectedKey" | "chordInstrument" | "chordPattern" | "melodyVoice" | "beatOffset">;
 }
 
-export default function DrumStep({ options, beatsPerBar, bpm, onSelect, onSkip }: Props) {
-  const filtered = options.filter((s) => s.beatsPerBar === beatsPerBar);
-  const [showAll, setShowAll] = useState(false);
-  const [selectedKit, setSelectedKit] = useState<DrumKit>("acoustic-kit");
+export default function DrumStep({ options, beatsPerBar, bpm, onSelect, onSkip, savedStyle, savedKit, previewSong }: Props) {
+  const filtered = options.filter(s => s.beatsPerBar === beatsPerBar);
+  const [selectedStyle, setSelectedStyle] = useState<DrumStyle | null>(() => filtered.find(s => s.name === savedStyle?.name) ?? null);
+  const [selectedKit, setSelectedKit] = useState<DrumKit>(savedKit ?? "acoustic-kit");
   const preview = useAudioPreview();
+  const request = useRef(0);
+  // Reuse the existing song renderer once; all beat auditions share this accompaniment.
+  const accompanimentCache = useRef<{ song: Props["previewSong"]; bpm: number; beatsPerBar: number; pending: Promise<AudioBuffer> } | null>(null);
+  useEffect(() => () => { request.current++; }, []);
+  const getAccompaniment = () => {
+      if (!previewSong) return Promise.resolve(undefined);
+      const cached = accompanimentCache.current;
+      if (cached && cached.song === previewSong && cached.bpm === bpm && cached.beatsPerBar === beatsPerBar) return cached.pending;
+      const pending = renderMix(
+        previewSong.notes, previewSong.selectedChords ?? undefined, previewSong.selectedChordsB ?? undefined,
+        undefined, undefined, bpm, previewSong.voicePcm ?? undefined, previewSong.pitchReadings,
+        previewSong.detectedKey ?? undefined, previewSong.chordInstrument, beatsPerBar, previewSong.melodyVoice,
+        undefined, undefined, previewSong.notes, "acoustic-kit",
+        { voice: Math.max(0, -previewSong.beatOffset), chords: Math.max(0, previewSong.beatOffset), drums: Math.max(0, previewSong.beatOffset) }, previewSong.chordPattern ?? undefined,
+      ).then(({ buffer, url }) => { URL.revokeObjectURL(url); return buffer; }).catch(error => { if (accompanimentCache.current?.pending === pending) accompanimentCache.current = null; throw error; });
+      accompanimentCache.current = { song: previewSong, bpm, beatsPerBar, pending };
+      return pending;
+  };
+  const stop = () => { request.current++; preview.stop(); };
   const handlePreview = (style: DrumStyle) => {
-    if (preview.state?.key === style.name) { preview.stop(); return; }
-    void preview.start(style.name, (observer) => previewDrums(style, selectedKit, bpm, observer));
+    if (preview.state?.key === style.name) {
+      if (preview.state.phase === "paused") void preview.resume();
+      else if (preview.state.phase === "playing") void preview.pause();
+      else stop();
+      return;
+    }
+    const run = ++request.current;
+    void preview.start(style.name, async observer => {
+      await ensureToneStarted();
+      const accompaniment = await getAccompaniment();
+      if (run !== request.current) return;
+      await previewDrums(style, selectedKit, bpm, observer, accompaniment, previewSong?.beatOffset ?? 0);
+    }, true);
   };
   return (
-    <div className="settings-stack">
-      <CompactSelect label="Drum sound" value={selectedKit} options={DRUM_KITS.map((kit) => ({ value: kit.id, label: kit.label }))} onChange={(value) => { preview.stop(); setSelectedKit(value); }} />
-      <SecondaryButton onClick={() => { preview.stop(); onSkip(); }}>Skip — no drums</SecondaryButton>
+    <div className="settings-stack beat-discovery">
+      <div className="beat-exploration-header">
+        <h2 className="chord-section-title">Try these beats</h2>
+        <CompactSelect hideLabel label="Drum sound" value={selectedKit} options={DRUM_KITS.map(kit => ({ value: kit.id, label: kit.label }))}
+          onChange={value => { stop(); setSelectedKit(value); }} />
+      </div>
       {preview.error && <p className="recovery-message" role="alert">{preview.error}</p>}
       <div className="progression-list">
-        {(showAll ? filtered : filtered.slice(0, 3)).map((style) => {
+        {filtered.map(style => {
           const previewHere = preview.state?.key === style.name;
           const playing = previewHere && preview.state?.phase === "playing";
-          const steps = beatsPerBar * 4;
-          return <Surface as="article" level={playing ? "active" : "soft"} key={style.name} aria-label={`${style.name} rhythm`}>
-            <div className="progression-header">
-              <div><h2 className="progression-name">{style.name}</h2><p className="phase-hint">{style.description}</p><p className="progression-notation">{bpm} BPM</p></div>
-              <SecondaryButton variant="soft" className="icon-action" aria-label={previewHere ? `Stop ${style.name} preview` : `Preview ${style.name}`} aria-busy={previewHere && preview.state?.phase === "loading"} aria-pressed={previewHere} onClick={() => handlePreview(style)}><Icon name={previewHere ? playing ? "stop" : "wave" : "play"} /></SecondaryButton>
+          const paused = previewHere && preview.state?.phase === "paused";
+          const selected = selectedStyle?.name === style.name;
+          const activeStep = previewHere ? preview.state?.step ?? null : null;
+          return <Surface as="article" level="soft" className={`beat-card${selected ? " is-selected" : ""}`} key={style.name} aria-label={`${style.name} rhythm`}>
+            <button type="button" className="progression-card-select" aria-label={`Choose ${style.name} beat`} aria-pressed={selected} onClick={() => setSelectedStyle(style)}>
+              <span className="progression-selection-indicator" aria-hidden="true">{selected && <svg viewBox="0 0 16 16" fill="none"><path d="m4 8 2.5 2.5L12 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}</span>
+            </button>
+            <div className="beat-card-header">
+              <div className="beat-card-copy">
+                <h3 className="progression-name">{style.name}</h3>
+              </div>
+              <SecondaryButton variant="soft" className="icon-action beat-preview" aria-label={previewHere ? paused ? `Resume ${style.name} preview` : playing ? `Pause ${style.name} preview` : `Cancel ${style.name} preview` : `Preview ${style.name} with your song`}
+                aria-busy={previewHere && preview.state?.phase === "loading"} aria-pressed={playing || paused}
+                onClick={event => { event.stopPropagation(); handlePreview(style); }}>
+                <Icon name={previewHere ? playing ? "pause" : paused ? "play" : "wave" : "play"} />
+              </SecondaryButton>
             </div>
-            <div className="rhythm-pattern" aria-hidden="true">{Array.from({ length: steps }, (_, step) => {
-              const hits = style.pattern.filter((hit) => { const [bar, beat, sub] = hit.time.split(":").map(Number); return bar * steps + beat * 4 + sub === step; });
-              const instrument = hits.find((hit) => hit.instrument === "kick")?.instrument ?? hits.find((hit) => hit.instrument === "snare")?.instrument ?? hits[0]?.instrument;
-              const active = playing && preview.state?.step !== null && (preview.state?.step ?? -1) % steps === step;
-              return <span key={step} className={`rhythm-step ${instrument ? `rhythm-step--${instrument} is-hit` : ""} ${active ? "is-playing" : ""}`} />;
-            })}</div>
-            <div className="progression-footer"><span className="progression-tip">Kick · snare · hi-hat</span><SecondaryButton aria-label={`Use ${style.name} beat`} onClick={() => { preview.stop(); onSelect(style, selectedKit); }}>Use this beat</SecondaryButton></div>
-            {previewHere && <p className="phase-hint" role="status">{playing ? "Playing your groove…" : "Loading sounds…"}</p>}
+            <MiniBeatBars pattern={style} playbackStep={activeStep} paused={paused} />
+            {previewHere && <span className="sr-only" role="status">{paused ? "Preview paused" : playing ? "Playing with your song" : "Loading sounds"}</span>}
           </Surface>;
         })}
       </div>
-      {filtered.length > 3 && <SecondaryButton aria-expanded={showAll} onClick={() => { if (showAll) preview.stop(); setShowAll((value) => !value); }}>{showAll ? "Show fewer ideas" : "More beat ideas"}</SecondaryButton>}
+      <div className="beat-sticky-action">
+        <ActionButton disabled={!selectedStyle} onClick={() => { if (selectedStyle) { stop(); onSelect(selectedStyle, selectedKit); } }}>Continue to Mix<Icon name="arrow" /></ActionButton>
+        <SecondaryButton onClick={() => { stop(); onSkip(); }}>Continue without drums</SecondaryButton>
+      </div>
     </div>
   );
 }

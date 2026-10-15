@@ -2,14 +2,15 @@
 
 interface Props<T extends string> {
   label: string;
+  hideLabel?: boolean;
   value: T;
   options: { value: T; label: string }[];
   onChange: (value: T) => void;
 }
 
-export default function CompactSelect<T extends string>({ label, value, options, onChange }: Props<T>) {
+export default function CompactSelect<T extends string>({ label, hideLabel = false, value, options, onChange }: Props<T>) {
   return <label className="compact-select-field">
-    <span className="field-label">{label}</span>
+    <span className={hideLabel ? "sr-only" : "field-label"}>{label}</span>
     <span className="compact-select-control">
       <select value={value} onChange={event => onChange(event.target.value as T)}>
         {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}

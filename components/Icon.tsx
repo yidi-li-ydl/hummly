@@ -1,8 +1,9 @@
 import type { ReactNode, SVGProps } from "react";
 
-type IconName = "mic" | "stop" | "upload" | "arrow" | "spark" | "wave" | "note" | "beat" | "play";
+type IconName = "mic" | "pause" | "stop" | "upload" | "arrow" | "spark" | "wave" | "note" | "beat" | "play";
 const paths: Record<IconName, ReactNode> = {
   mic: <><rect x="9" y="2" width="6" height="13" rx="3" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" /></>,
+  pause: <><path d="M8 5v14M16 5v14" strokeWidth="4" /></>,
   stop: <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />,
   upload: <path d="M12 16V3m-5 5 5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />,
   arrow: <path d="M4 12h16m-6-6 6 6-6 6" />,
