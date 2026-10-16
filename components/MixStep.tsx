@@ -9,7 +9,10 @@ import Hummi from "./Hummi";
 import Icon from "./Icon";
 import ActionButton from "./ui/ActionButton";
 import SecondaryButton from "./ui/SecondaryButton";
-import Surface from "./ui/Surface";
+import FineTuneAudioView from "./FineTuneAudioView";
+import MixPlayer from "./MixPlayer";
+import MiniMixer, { MIX_TRACKS, type MixTrackKey } from "./MiniMixer";
+import { renderTrackMix } from "@/lib/audio/renderTrackMix";
 
 interface Props {
   notes: QuantizedNote[];
@@ -51,6 +54,7 @@ function voicePcmToAudioBuffer(pcm: VoicePcm): AudioBuffer {
 }
 
 export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, chordPattern, drumKit, beatOffset, onStartOver }: Props) {
+  const [editorOpen, setEditorOpen] = useState(false);
   const [status, setStatus] = useState<"rendering" | "ready" | "error">("rendering");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -75,11 +79,12 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
   // Web Audio playback refs
   const audioCtxRef = useRef<AudioContext | null>(null);
   const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
-  const gainsRef = useRef<GainNode[]>([]);
+  const gainsRef = useRef<Partial<Record<MixTrackKey, GainNode>>>({});
+  const positionRef = useRef(0);
   const playStartRef = useRef<number>(0);
 
   // Playhead
-  const [playheadTime, setPlayheadTime] = useState<number | undefined>(undefined);
+  const [playheadTime, setPlayheadTime] = useState(0);
   const playheadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const voiceEq: VoiceEQ = { lowCut: 80, presence: 0 };
@@ -155,11 +160,10 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
 
   // Sync volume/mute to GainNodes in real time
   useEffect(() => {
-    const keys = ["voice", "chords", "drums"] as const;
-    gainsRef.current.forEach((gain, i) => {
-      const k = keys[i];
-      gain.gain.value = trackMutes[k] ? 0 : trackVolumes[k];
-    });
+    for (const { key } of MIX_TRACKS) {
+      const gain = gainsRef.current[key];
+      if (gain) gain.gain.value = trackMutes[key] ? 0 : trackVolumes[key];
+    }
   }, [trackVolumes, trackMutes]);
 
   // Updating React state on every animation frame redraws all three full-size
@@ -170,7 +174,7 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
     playheadTimerRef.current = setInterval(() => {
       const ctx = audioCtxRef.current;
       if (ctx) {
-        setPlayheadTime(ctx.currentTime - playStartRef.current);
+        setPlayheadTime(Math.max(0, ctx.currentTime - playStartRef.current));
       }
     }, 50);
     return () => {
@@ -181,17 +185,18 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
     };
   }, [isPlaying]);
 
-  const stopPlayback = useCallback(() => {
+  const stopPlayback = useCallback((reset = true) => {
     for (const s of sourcesRef.current) {
+      s.onended = null;
       try { s.stop(); s.disconnect(); } catch { /* already stopped */ }
     }
     sourcesRef.current = [];
-    gainsRef.current = [];
+    gainsRef.current = {};
     if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
       audioCtxRef.current.close();
       audioCtxRef.current = null;
     }
-    setPlayheadTime(undefined);
+    if (reset) { positionRef.current = 0; setPlayheadTime(0); }
     setIsPlaying(false);
   }, []);
 
@@ -203,90 +208,100 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
   const handlePcmChange = useCallback(async (pcm: VoicePcm) => {
     stopPlayback();
     setEditedPcm(pcm);
-    setEditedChordsPcm(null);
-    setEditedDrumsPcm(null);
 
     setStatus("rendering");
     try {
       const tracks = await renderThreeTracks(pcm, mixOffsets);
       setVoiceBuffer(tracks.voiceBuf);
-      setChordsBuffer(tracks.chordsBuf);
-      setDrumsBuffer(tracks.drumsBuf);
+      if (!editedChordsPcm) setChordsBuffer(tracks.chordsBuf);
+      if (!editedDrumsPcm) setDrumsBuffer(tracks.drumsBuf);
       setStatus("ready");
     } catch (err) {
       console.error("Re-render failed:", err);
       setErrorMsg(err instanceof Error ? err.message : String(err));
       setStatus("error");
     }
-  }, [stopPlayback, renderThreeTracks, mixOffsets]);
+  }, [stopPlayback, renderThreeTracks, mixOffsets, editedChordsPcm, editedDrumsPcm]);
 
-  const togglePlay = () => {
-    if (isPlaying) {
-      stopPlayback();
-      return;
-    }
-    if (!voiceBuffer || !chordsBuffer || !drumsBuffer) return;
+  const availableTracks = MIX_TRACKS.filter(({ key }) => key === "voice" || (key === "chords" ? !!chords : !!drums));
+  const buffers = { voice: voiceBuffer, chords: chordsBuffer, drums: drumsBuffer };
+  const duration = Math.max(0, ...availableTracks.map(({ key }) => buffers[key]?.duration ?? 0));
 
+  // Use the existing three-buffer transport, restarting sources at a real sample
+  // offset for pause/resume and seeking. Both views share these same refs.
+  const startPlayback = (offset: number) => {
+    stopPlayback(false);
     const ctx = new AudioContext();
     audioCtxRef.current = ctx;
-
-    const buffers = [voiceBuffer, chordsBuffer, drumsBuffer];
-    const keys = ["voice", "chords", "drums"] as const;
-    const sources: AudioBufferSourceNode[] = [];
-    const gains: GainNode[] = [];
-
-    for (let i = 0; i < 3; i++) {
+    void ctx.resume().catch(() => {
+      stopPlayback();
+      setErrorMsg("Couldn’t play your song. Try again.");
+    });
+    let longest: AudioBufferSourceNode | null = null;
+    let longestDuration = 0;
+    for (const { key } of availableTracks) {
+      const buffer = buffers[key];
+      if (!buffer || offset >= buffer.duration) continue;
       const source = ctx.createBufferSource();
-      source.buffer = buffers[i];
+      source.buffer = buffer;
       const gain = ctx.createGain();
-      const k = keys[i];
-      gain.gain.value = trackMutes[k] ? 0 : trackVolumes[k];
+      gain.gain.value = trackMutes[key] ? 0 : trackVolumes[key];
       source.connect(gain);
       gain.connect(ctx.destination);
-      sources.push(source);
-      gains.push(gain);
+      sourcesRef.current.push(source);
+      gainsRef.current[key] = gain;
+      if (buffer.duration > longestDuration) { longest = source; longestDuration = buffer.duration; }
     }
-
-    sources[0].onended = () => stopPlayback();
-
-    playStartRef.current = ctx.currentTime;
-    sources.forEach(s => s.start());
-
-    sourcesRef.current = sources;
-    gainsRef.current = gains;
+    if (!longest) { stopPlayback(); return; }
+    longest.onended = () => stopPlayback();
+    const start = ctx.currentTime + .02;
+    playStartRef.current = start - offset;
+    positionRef.current = offset;
+    setPlayheadTime(offset);
+    sourcesRef.current.forEach(source => source.start(start, offset));
     setIsPlaying(true);
   };
 
+  const togglePlay = () => {
+    if (isPlaying) {
+      const ctx = audioCtxRef.current;
+      positionRef.current = Math.max(0, Math.min(duration, ctx ? ctx.currentTime - playStartRef.current : playheadTime));
+      setPlayheadTime(positionRef.current);
+      stopPlayback(false);
+    } else if (status === "ready") startPlayback(positionRef.current >= duration ? 0 : positionRef.current);
+  };
+
+  const seek = (seconds: number) => {
+    const position = Math.max(0, Math.min(duration, seconds));
+    positionRef.current = position;
+    setPlayheadTime(position);
+    if (isPlaying) startPlayback(position);
+  };
+
   const handleDownload = async () => {
-    if (exporting) return;
+    if (exporting || status !== "ready") return;
     setExporting(true);
     setExportError(null);
     try {
-    const common = [
-      snappedNotes, chords ?? undefined, chordsB ?? undefined, drums ?? undefined, undefined, bpm,
-      (editedPcm ?? voicePcm) ?? undefined, pitchReadings, detectedKey,
-      chordInstrument, beatsPerBar, "real" as const,
-    ] as const;
-    const tail = [voiceEq, notes, drumKit, mixOffsets, chordPattern ?? undefined] as const;
-
-    const OFF = 0.0001;
-    const vol: MixVolumes = {
-      melody: trackMutes.voice ? OFF : Math.max(OFF, trackVolumes.voice),
-      chords: trackMutes.chords ? OFF : Math.max(OFF, trackVolumes.chords),
-      drums: trackMutes.drums ? OFF : Math.max(OFF, trackVolumes.drums),
-    };
-
-    const { url } = await renderMix(...common, vol, ...tail);
-    downloadWav(url);
-    URL.revokeObjectURL(url);
+      const url = await renderTrackMix(availableTracks.flatMap(({ key }) => {
+        const buffer = buffers[key];
+        return buffer ? [{ buffer, volume: trackMutes[key] ? 0 : trackVolumes[key] }] : [];
+      }));
+      downloadWav(url);
+      // Let the browser begin reading the download before releasing the URL.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch {
-      setExportError("Your demo is still here. We couldn’t export it this time—try downloading again.");
+      setExportError("Your song is still here. We couldn’t export it this time—try downloading again.");
     } finally {
       setExporting(false);
     }
   };
 
-  if (status === "rendering") {
+  const requestStartOver = () => {
+    if (window.confirm("Start a new song? Your current song and edits will be cleared. Download it first if you’d like to keep it.")) onStartOver();
+  };
+
+  if (status === "rendering" && !voiceBuffer) {
     return (
       <div className="flex flex-col items-center gap-6 py-8">
         <Icon name="wave" className="w-14 h-14 text-ink" />
@@ -316,7 +331,7 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
           <details className="text-xs max-w-md break-all"><summary>Error details</summary><p>{errorMsg}</p></details>
         )}
         <SecondaryButton
-          onClick={onStartOver}
+          onClick={requestStartOver}
         >
           Start Over
         </SecondaryButton>
@@ -324,122 +339,53 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
     );
   }
 
-  const mixerTracks = [
-    { key: "voice" as const, label: "Your hum", icon: "mic" as const },
-    { key: "chords" as const, label: "Chords", icon: "note" as const },
-    { key: "drums" as const, label: "Beat", icon: "beat" as const },
-  ];
+  const playerProps = { playing: isPlaying, position: Math.max(0, Math.min(duration, playheadTime)), duration,
+    disabled: status !== "ready", onToggle: togglePlay, onSeek: seek };
 
   return (
-    <div className="flex flex-col items-center gap-6 py-4">
-      <div className="flex items-center justify-center gap-3 w-full min-w-0 mb-2">
-        <Hummi state="dj" size="small" className="mix-dj-hummi" priority />
-        <div className="min-w-0">
-        <h1 className="demo-title">Your demo is ready.</h1>
-        <p className="demo-description mt-1">That little hum became something.</p>
-        <p className="text-text-secondary text-xs mt-1">
-          {[chords && `${chords.name} chords`, drums && `${drums.name} drums`].filter(Boolean).join(" + ") || "Voice only"} @ {bpm} BPM
-        </p>
+    <>
+      <div className="mix-home">
+        <header className="mix-completion">
+          <h1>Your song is ready!</h1>
+          <p>That little hum became something magical.</p>
+        </header>
+        <div className={`mix-hero${isPlaying ? " is-playing" : ""}`} style={{ "--song-beat": `${60 / bpm}s` } as React.CSSProperties}>
+          <span className="mix-music-note mix-music-note--one" aria-hidden="true">♪</span>
+          <Hummi state="headphones" size="medium" animated={false} className="mix-hero-hummi" priority />
+          <span className="mix-music-note mix-music-note--two" aria-hidden="true">♫</span>
         </div>
-      </div>
-
-      {/* Play button */}
-      <button
-        onClick={togglePlay}
-        aria-label={isPlaying ? "Pause demo" : "Play demo"}
-        className={`demo-transport ${isPlaying ? "is-playing" : ""}`}
-      >
-        {isPlaying ? (
-          <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24">
-            <rect x="6" y="4" width="4" height="16" rx="1" />
-            <rect x="14" y="4" width="4" height="16" rx="1" />
-          </svg>
-        ) : (
-          <svg className="w-10 h-10 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M8 5v14l11-7z" />
-          </svg>
-        )}
-      </button>
-
-      {/* Multi-track waveform editor */}
-      <details className="precision-details"><summary>Fine-tune audio</summary><Surface>
-      {effectivePcm && chordsPcm && drumsPcm && (
-        <MultiTrackEditor
-          tracks={[
-            { id: "voice", label: "Your hum", icon: <Icon name="mic" className="w-4 h-4 shrink-0" />, pcm: effectivePcm, onPcmChange: handlePcmChange },
-            { id: "chords", label: "Chords", icon: <Icon name="note" className="w-4 h-4 shrink-0" />, pcm: chordsPcm,
-              onPcmChange: (pcm) => { stopPlayback(); setEditedChordsPcm(pcm); setChordsBuffer(voicePcmToAudioBuffer(pcm)); }},
-            { id: "drums", label: "Beat", icon: <Icon name="beat" className="w-4 h-4 shrink-0" />, pcm: drumsPcm,
-              onPcmChange: (pcm) => { stopPlayback(); setEditedDrumsPcm(pcm); setDrumsBuffer(voicePcmToAudioBuffer(pcm)); }},
-          ]}
-          bpm={bpm}
-          beatsPerBar={beatsPerBar}
-          beatOffset={beatOffset}
-          currentTime={playheadTime}
-        />
-      )}
-      </Surface></details>
-
-      {/* Track mixer */}
-      <div className="track-mixer">
-        {mixerTracks.map(({ key, label, icon }) => (
-          <div key={key} className="flex items-center gap-3">
-            <span className="text-xs w-24 shrink-0 flex items-center gap-2"><Icon name={icon} className="w-4 h-4" /> {label}</span>
-            <input
-              type="range"
-              aria-label={`${label} volume`}
-              min={0}
-              max={1}
-              step={0.01}
-              value={trackVolumes[key]}
-              onChange={(e) =>
-                setTrackVolumes((v) => ({ ...v, [key]: parseFloat(e.target.value) }))
-              }
-              className="mix-level flex-1 min-w-0"
-            />
-            <SecondaryButton className="icon-action"
-              aria-label={`${trackMutes[key] ? "Unmute" : "Mute"} ${label}`}
-              aria-pressed={trackMutes[key]}
-              onClick={() => setTrackMutes((m) => ({ ...m, [key]: !m[key] }))}
-
-              title={trackMutes[key] ? "Unmute" : "Mute"}
-            >
-              {trackMutes[key] ? (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                </svg>
-              )}
-            </SecondaryButton>
-          </div>
-        ))}
-      </div>
-
-
-      <div className="flex flex-wrap justify-center gap-3 mt-2">
-        <ActionButton
-          onClick={handleDownload}
-          disabled={exporting}
-          className="export-cta"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
+        <MixPlayer {...playerProps} />
+        {errorMsg && <p className="recovery-message" role="alert">{errorMsg}</p>}
+        <MiniMixer available={availableTracks.map(track => track.key)} volumes={trackVolumes} mutes={trackMutes}
+          onVolume={(key, volume) => setTrackVolumes(previous => ({ ...previous, [key]: volume }))}
+          onMute={key => setTrackMutes(previous => ({ ...previous, [key]: !previous[key] }))} />
+        <button type="button" className="fine-tune-entry" onClick={() => setEditorOpen(true)}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="m8 8 12 12M8 16 20 4"/></svg>
+          <span>Fine-tune audio</span><Icon name="arrow" />
+        </button>
+        <ActionButton onClick={handleDownload} disabled={exporting || status !== "ready"} className="mix-download">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4" /></svg>
           {exporting ? "Preparing WAV…" : "Download WAV"}
         </ActionButton>
-        <SecondaryButton
-          onClick={onStartOver}
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          Start Over
-        </SecondaryButton>
+        {exportError && <p className="recovery-message" role="alert">{exportError}</p>}
+        <button type="button" className="mix-start-over" onClick={requestStartOver}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 4v5h5M4.6 9a8 8 0 1 1-.6 6" /></svg>Start over
+        </button>
       </div>
-      {exportError && <p className="recovery-message" role="alert">{exportError}</p>}
-    </div>
+      <FineTuneAudioView open={editorOpen} onClose={() => setEditorOpen(false)} busy={status === "rendering"}
+        player={<MixPlayer {...playerProps} compact />}>
+        {effectivePcm && <MultiTrackEditor
+          tracks={[
+            { id: "voice", label: "Your hum", icon: <Icon name="mic" />, pcm: effectivePcm, onPcmChange: handlePcmChange },
+            ...(chords && chordsPcm ? [{ id: "chords" as const, label: "Chords", icon: <Icon name="note" />, pcm: chordsPcm,
+              onPcmChange: (pcm: VoicePcm) => { stopPlayback(); setEditedChordsPcm(pcm); setChordsBuffer(voicePcmToAudioBuffer(pcm)); } }] : []),
+            ...(drums && drumsPcm ? [{ id: "drums" as const, label: "Beat", icon: <Icon name="beat" />, pcm: drumsPcm,
+              onPcmChange: (pcm: VoicePcm) => { stopPlayback(); setEditedDrumsPcm(pcm); setDrumsBuffer(voicePcmToAudioBuffer(pcm)); } }] : []),
+          ]}
+          disabled={status !== "ready"}
+          bpm={bpm} beatsPerBar={beatsPerBar} beatOffset={beatOffset} currentTime={editorOpen ? playheadTime : undefined}
+        />}
+      </FineTuneAudioView>
+    </>
   );
 }

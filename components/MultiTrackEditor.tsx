@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, type CSSProperties } from "react";
 import type { VoicePcm } from "@/lib/types";
 import { cutSelection, silenceSelection, stretchSelection } from "@/lib/audio/waveformOps";
 import WaveformCanvas from "./WaveformCanvas";
@@ -18,6 +18,7 @@ interface TrackData {
 
 interface MultiTrackEditorProps {
   tracks: TrackData[];
+  disabled?: boolean;
   bpm: number;
   beatsPerBar: number;
   beatOffset: number;
@@ -40,11 +41,14 @@ function initTrackState(pcm: VoicePcm): TrackState {
 
 export default function MultiTrackEditor({
   tracks,
+  disabled = false,
   bpm,
   beatsPerBar,
   beatOffset,
   currentTime,
 }: MultiTrackEditorProps) {
+  const [stretchMode, setStretchMode] = useState(false);
+  const [stretchError, setStretchError] = useState<string | null>(null);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(100);
   const [activeTrackId, setActiveTrackId] = useState<TrackId>(tracks[0]?.id ?? "voice");
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -86,7 +90,7 @@ export default function MultiTrackEditor({
     setTrackStates((prev) => {
       const next = { ...prev };
       for (const t of tracks) {
-        next[t.id] = initTrackState(t.pcm);
+        if (next[t.id]?.currentPcm !== t.pcm) next[t.id] = initTrackState(t.pcm);
       }
       return next;
     });
@@ -102,6 +106,8 @@ export default function MultiTrackEditor({
 
   const handleSelectionChange = useCallback(
     (id: TrackId, sel: { startSec: number; endSec: number } | null) => {
+      setActiveTrackId(id);
+      setStretchMode(false);
       updateTrack(id, (s) => ({ ...s, selection: sel }));
     },
     [updateTrack]
@@ -109,6 +115,7 @@ export default function MultiTrackEditor({
 
   const applyEdit = useCallback(
     (newPcm: VoicePcm) => {
+      setStretchMode(false);
       const id = activeTrackId;
       setTrackStates((prev) => {
         const s = prev[id];
@@ -125,6 +132,14 @@ export default function MultiTrackEditor({
   );
 
   const activeState = trackStates[activeTrackId];
+  const locked = disabled || Object.values(trackStates).some(state => state.isProcessing);
+  const hasSelection = !!activeState?.selection && activeState.selection.endSec - activeState.selection.startSec >= .02;
+  const canCut = hasSelection && !!activeState?.selection &&
+    activeState.currentPcm.channels[0].length / activeState.currentPcm.sampleRate -
+    (activeState.selection.endSec - activeState.selection.startSec) >= MIN_REMAINING_SEC;
+  const timelineDuration = Math.max(0, ...Object.values(trackStates).map(state => state.currentPcm.channels[0].length / state.currentPcm.sampleRate));
+  const barDuration = beatsPerBar * 60 / bpm;
+  const ticks = Array.from({ length: Math.ceil(timelineDuration / barDuration) }, (_, i) => i * barDuration);
 
   const handleCut = useCallback(() => {
     if (!activeState?.selection) return;
@@ -148,16 +163,19 @@ export default function MultiTrackEditor({
 
   const handleStretch = useCallback(
     async (ratio: number) => {
-      if (!activeState?.selection) return;
+      if (!activeState || activeState.isProcessing) return;
       const id = activeTrackId;
       const pcm = activeState.currentPcm;
-      const sel = activeState.selection;
+      const sel = activeState.selection ?? { startSec: 0, endSec: pcm.channels[0].length / pcm.sampleRate };
       const start = Math.round(sel.startSec * pcm.sampleRate);
       const end = Math.round(sel.endSec * pcm.sampleRate);
+      setStretchError(null);
       updateTrack(id, (s) => ({ ...s, isProcessing: true }));
       try {
         const newPcm = await stretchSelection(pcm, start, end, ratio);
         applyEdit(newPcm);
+      } catch {
+        setStretchError("Couldn’t stretch this audio. Try again.");
       } finally {
         updateTrack(id, (s) => ({ ...s, isProcessing: false }));
       }
@@ -166,6 +184,7 @@ export default function MultiTrackEditor({
   );
 
   const handleUndo = useCallback(() => {
+    setStretchMode(false);
     const id = activeTrackId;
     setTrackStates((prev) => {
       const s = prev[id];
@@ -186,23 +205,32 @@ export default function MultiTrackEditor({
   }, [activeTrackId, trackStates]);
 
   return (
-    <div className="w-full min-w-0 flex flex-col gap-2">
+    <div className="multi-track-editor w-full min-w-0 flex flex-col gap-2" aria-busy={locked}>
       <WaveformToolbar
-        hasSelection={activeState?.selection !== null}
+        hasSelection={hasSelection}
+        canCut={canCut}
         hasHistory={(activeState?.history.length ?? 0) > 0}
-        isProcessing={activeState?.isProcessing ?? false}
+        isProcessing={locked}
         pixelsPerSecond={pixelsPerSecond}
         onPixelsPerSecondChange={setPixelsPerSecond}
         onCut={handleCut}
         onSilence={handleSilence}
-        onStretch={handleStretch}
+        stretchMode={stretchMode}
+        onToggleStretch={() => setStretchMode(v => !v)}
         onUndo={handleUndo}
       />
+      <p className="text-xs text-text-secondary" aria-live="polite">
+        {!activeState?.selection ? "Drag across the waveform to select a section." : stretchMode
+          ? "Drag the right edge to stretch. Release to hear it with Play."
+          : "Section selected. Choose Cut, Silence or Stretch."}
+      </p>
+      {stretchError && <p role="alert" className="text-xs">{stretchError}</p>}
 
-      <div className="rounded-lg overflow-hidden bg-cream">
+      <div className="editor-waveforms rounded-lg overflow-hidden bg-cream">
         <div className="flex">
           {/* Track headers */}
-          <div className="flex flex-col shrink-0" style={{ width: 80 }}>
+          <div className="flex flex-col shrink-0" style={{ width: 76 }}>
+            <span className="editor-timeline-label" aria-hidden="true">Bars</span>
             {tracks.map((track) => {
               const isActive = track.id === activeTrackId;
               return (
@@ -212,13 +240,10 @@ export default function MultiTrackEditor({
                   tabIndex={0}
                   aria-label={`Edit ${track.label} track`}
                   aria-pressed={isActive}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveTrackId(track.id); } }}
-                  onClick={() => setActiveTrackId(track.id)}
-                  className={`h-[120px] flex items-center gap-1.5 px-2 cursor-pointer select-none transition-colors ${
-                    isActive
-                      ? "bg-lavender text-ink border-r-2 border-r-ink"
-                      : "bg-cream text-text-secondary hover:bg-lavender border-r-2 border-r-transparent"
-                  }`}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (!locked) setActiveTrackId(track.id); } }}
+                  onClick={() => { if (!locked) setActiveTrackId(track.id); }}
+                  style={{ "--track-color": `var(--${track.id === "voice" ? "lavender" : track.id === "chords" ? "pink" : "mint"})` } as CSSProperties}
+                  className={`editor-track-label${isActive ? " is-active" : ""}`}
                 >
                   <span className="shrink-0">{track.icon}</span>
                   <span className="text-xs font-medium">{track.label}</span>
@@ -228,8 +253,11 @@ export default function MultiTrackEditor({
           </div>
 
           {/* Shared scroll area */}
-          <div className="flex-1 min-w-0 overflow-x-auto" ref={scrollContainerRef}>
-            <div className="flex flex-col">
+          <div className="editor-scroll flex-1 min-w-0 overflow-x-auto" ref={scrollContainerRef} tabIndex={0} role="region" aria-label="Waveform timeline, scroll horizontally">
+            <div className="flex flex-col" style={{ width: Math.max(1, Math.ceil(timelineDuration * pixelsPerSecond)), minWidth: "100%" }}>
+              <div className="editor-timeline" aria-label="Timeline in bars; swipe to scroll">
+                {ticks.map((time, i) => <span key={time} style={{ left: time * pixelsPerSecond + 4 }}>{i + 1}<small>{time.toFixed(1)}s</small></span>)}
+              </div>
               {tracks.map((track) => {
                 const state = trackStates[track.id];
                 const isActive = track.id === activeTrackId;
@@ -238,17 +266,21 @@ export default function MultiTrackEditor({
                   <div
                     key={track.id}
                     onPointerDown={() => {
-                      if (!isActive) setActiveTrackId(track.id);
+                      if (!isActive && !locked) setActiveTrackId(track.id);
                     }}
-                    className={isActive ? "" : "opacity-85"}
+                    style={{ "--track-color": `var(--${track.id === "voice" ? "lavender" : track.id === "chords" ? "pink" : "mint"})` } as CSSProperties}
+                    className="editor-track-waveform"
                   >
                     <WaveformCanvas
+                      stretchMode={isActive && stretchMode && !!state.selection}
+                      onStretch={handleStretch}
                       bare
                       scrollContainerRef={scrollContainerRef}
                       pcm={state.currentPcm}
                       selection={isActive ? state.selection : null}
                       onSelectionChange={(sel) => handleSelectionChange(track.id, sel)}
-                      disabled={!isActive || state.isProcessing}
+                      disabled={locked}
+                      trackColor={track.id === "voice" ? "lavender" : track.id === "chords" ? "pink" : "mint"}
                       pixelsPerSecond={pixelsPerSecond}
                       bpm={bpm}
                       beatsPerBar={beatsPerBar}

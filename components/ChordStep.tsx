@@ -83,7 +83,7 @@ export default function ChordStep({ options, detectedKey, bpm, beatsPerBar, onSe
   return (
     <div className="settings-stack chord-discovery">
       <header className="chord-context-header">
-        <h1>{phase === "pick-a" ? "Your hum, meet your chords." : "Let's keep it going."}</h1>
+        <h1>{phase === "pick-a" ? "We found chords that match your key." : "Let's keep it going."}</h1>
         <p className="chord-context-meta">
           <span>{detectedKey.key} {detectedKey.mode}</span><span aria-hidden="true">·</span>
           <span className={`chord-context-pill${phase === "pick-b" ? " is-next" : ""}`}>

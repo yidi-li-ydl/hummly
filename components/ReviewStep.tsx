@@ -200,7 +200,7 @@ export default function ReviewStep({
         <SelectionGroup label="Beats per bar" value={String(beatsPerBar)} options={[{ value: "3", label: "3 beats" }, { value: "4", label: "4 beats" }]} onChange={(value) => { stopPlayback(); onBeatsPerBarChange(Number(value)); }} />
         </section>
         {voicePcm && <section className="timing-task timing-task--alignment" aria-labelledby="alignment-task-title">
-          <h2 id="alignment-task-title" className="timing-task-title"><span aria-hidden="true">2</span>Align the start</h2>
+          <h2 id="alignment-task-title" className="timing-task-title"><span aria-hidden="true">2</span>Fine-tune timing</h2>
           <AlignTimeline voicePcm={voicePcm} bpm={bpm} beatsPerBar={beatsPerBar} beatOffset={beatOffset} onChange={onBeatOffsetChange} onsets={audioBeats?.onsets} />
         </section>}
       </Surface></section>

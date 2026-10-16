@@ -21,14 +21,13 @@ export default function AlignTimeline({ voicePcm, bpm, beatsPerBar, beatOffset, 
   const beatPeriod = 60 / bpm;
   const padding = beatsPerBar * beatPeriod * 2;
   const length = duration + padding * 2;
-  const [showFullTrack, setShowFullTrack] = useState(false);
   // Store displacement from the default position so tempo changes keep the
   // voice centered without resetting an alignment the user has adjusted.
   const [voiceShift, setVoiceShift] = useState(0);
   const voicePos = Math.max(0, Math.min(padding + voiceShift, padding * 2));
   const beatsPos = voicePos + beatOffset;
-  const viewStart = showFullTrack ? 0 : Math.max(0, Math.min(voicePos, beatsPos) - beatPeriod);
-  const viewLength = showFullTrack ? length : Math.min(length, beatPeriod * (beatsPerBar * 4 + 2));
+  const viewStart = Math.max(0, Math.min(voicePos, beatsPos) - beatPeriod);
+  const viewLength = Math.min(length, beatPeriod * (beatsPerBar * 4 + 2));
   const trackRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ target: DragTarget; x: number; voice: number; beats: number; width: number; pointer: number } | null>(null);
   const [dragging, setDragging] = useState<DragTarget | null>(null);
@@ -72,18 +71,14 @@ export default function AlignTimeline({ voicePcm, bpm, beatsPerBar, beatOffset, 
     move(target, next);
   }
 
-  const interval = showFullTrack ? (length > 30 ? 10 : length > 10 ? 5 : 1) : beatPeriod * beatsPerBar;
+  const interval = beatPeriod * beatsPerBar;
   const firstTick = Math.ceil(viewStart / interval) * interval;
   const ticks = Array.from({ length: Math.max(0, Math.floor((viewStart + viewLength - firstTick) / interval) + 1) }, (_, i) => firstTick + i * interval);
   const beats = Array.from({ length: Math.ceil(duration / beatPeriod) }, (_, i) => i);
 
   return (
     <div className="alignment-workspace">
-      <p className="phase-hint">Match the Beats start to Voice in the first row. Drag either track to adjust.</p>
-      <div className="alignment-zoom" role="group" aria-label="Waveform zoom">
-        <button type="button" className="secondary-button" aria-pressed={!showFullTrack} onClick={() => setShowFullTrack(false)}>First 4 bars</button>
-        <button type="button" className="secondary-button" aria-pressed={showFullTrack} onClick={() => setShowFullTrack(true)}>Full waveform</button>
-      </div>
+      <p className="phase-hint">Drag either track to adjust.</p>
       <div className="alignment-grid">
         <div aria-hidden="true" />
         <div className="alignment-ruler" aria-hidden="true">
@@ -121,7 +116,7 @@ export default function AlignTimeline({ voicePcm, bpm, beatsPerBar, beatOffset, 
         })}
       </div>
       <p className="phase-hint">Orange marks show detected sound starts; the Beats row shows the regular beat grid.</p>
-      <p className="alignment-offset">Beats {beatOffset === 0 ? "aligned with voice" : `${Math.abs(beatOffset).toFixed(2)}s ${beatOffset > 0 ? "after" : "before"} voice`}</p>
+      <p className="alignment-offset">{beatOffset === 0 ? "Beats start with your voice" : `Beats start ${Math.abs(beatOffset).toFixed(2)}s ${beatOffset > 0 ? "after" : "before"} your voice`}</p>
     </div>
   );
 }

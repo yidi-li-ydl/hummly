@@ -29,6 +29,8 @@ export default function WaveformEditor({
   const [currentPcm, setCurrentPcm] = useState<VoicePcm>(voicePcm);
   const [history, setHistory] = useState<VoicePcm[]>([]);
   const [selection, setSelection] = useState<{ startSec: number; endSec: number } | null>(null);
+  const [stretchMode, setStretchMode] = useState(false);
+  const [stretchError, setStretchError] = useState<string | null>(null);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(100);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -58,6 +60,8 @@ export default function WaveformEditor({
 
   const applyEdit = useCallback(
     (newPcm: VoicePcm) => {
+      setStretchMode(false);
+      setPreviousPcm(newPcm);
       pushHistory(currentPcm);
       setCurrentPcm(newPcm);
       setSelection(null);
@@ -82,23 +86,28 @@ export default function WaveformEditor({
 
   const handleStretch = useCallback(
     async (ratio: number) => {
-      if (!selection) return;
-      const { start, end } = selToSamples(selection);
+      if (isProcessing) return;
+      const { start, end } = selToSamples(selection ?? { startSec: 0, endSec: currentPcm.channels[0].length / currentPcm.sampleRate });
+      setStretchError(null);
       setIsProcessing(true);
       try {
         const newPcm = await stretchSelection(currentPcm, start, end, ratio);
         applyEdit(newPcm);
+      } catch {
+        setStretchError("Couldn’t stretch this audio. Try again.");
       } finally {
         setIsProcessing(false);
       }
     },
-    [selection, selToSamples, currentPcm, applyEdit]
+    [selection, selToSamples, currentPcm, applyEdit, isProcessing]
   );
 
   const handleUndo = useCallback(() => {
+    setStretchMode(false);
     if (history.length === 0) return;
     const prev = history[history.length - 1];
     setHistory((h) => h.slice(0, -1));
+    setPreviousPcm(prev);
     setCurrentPcm(prev);
     setSelection(null);
     onPcmChange(prev);
@@ -114,16 +123,25 @@ export default function WaveformEditor({
         onPixelsPerSecondChange={setPixelsPerSecond}
         onCut={handleCut}
         onSilence={handleSilence}
-        onStretch={handleStretch}
+        stretchMode={stretchMode}
+        onToggleStretch={() => setStretchMode(v => !v)}
         onUndo={handleUndo}
       />
+      <p className="text-xs text-text-secondary" aria-live="polite">
+        {!selection ? "Drag across the waveform to select a section." : stretchMode
+          ? "Drag the right edge to stretch. Release to hear it with Play."
+          : "Section selected. Choose Cut, Silence or Stretch."}
+      </p>
+      {stretchError && <p role="alert" className="text-xs">{stretchError}</p>}
       <WaveformCanvas
+        stretchMode={stretchMode && !!selection}
+        onStretch={handleStretch}
         pcm={currentPcm}
         bpm={bpm}
         beatsPerBar={beatsPerBar}
         beatOffset={beatOffset}
         selection={selection}
-        onSelectionChange={setSelection}
+        onSelectionChange={(sel) => { setStretchMode(false); setSelection(sel); }}
         pixelsPerSecond={pixelsPerSecond}
         disabled={isProcessing}
         currentTime={currentTime}

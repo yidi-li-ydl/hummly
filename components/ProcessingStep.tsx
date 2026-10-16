@@ -4,7 +4,8 @@ import { useEffect } from "react";
 import { quantizeNotes } from "@/lib/audio/noteQuantizer";
 import { detectKey } from "@/lib/audio/keyDetector";
 import { generateChordProgressions } from "@/lib/audio/chordGenerator";
-import { detectBpmFromNotes, detectBeatOffset } from "@/lib/audio/bpmDetector";
+import { detectBpmFromNotes } from "@/lib/audio/bpmDetector";
+import { detectVoiceStart } from "@/lib/audio/voiceStart";
 import { analyzeAudioBeats } from "@/lib/audio/beatDetector";
 import { DRUM_STYLES } from "@/lib/audio/drumPatterns";
 import type { PitchReading, QuantizedNote, KeyResult, ChordProgression, DrumStyle, VoicePcm } from "@/lib/types";
@@ -40,7 +41,7 @@ export default function ProcessingStep({ readings, voicePcm, onComplete, onError
         const audioBeats = voicePcm ? analyzeAudioBeats(voicePcm) : null;
         const useAudio = audioBeats && audioBeats.confidence >= .5;
         const bpm = useAudio ? audioBeats.bpm : detectBpmFromNotes(extracted);
-        const offset = useAudio ? audioBeats.offset : detectBeatOffset(extracted, bpm);
+        const offset = voicePcm ? detectVoiceStart(voicePcm) : extracted[0].startTime;
         const options = generateChordProgressions(key);
         if (!cancelled) onComplete(extracted, key, options, DRUM_STYLES, bpm, offset);
       } catch {

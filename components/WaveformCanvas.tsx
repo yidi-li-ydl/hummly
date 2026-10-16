@@ -1,10 +1,13 @@
 "use client";
 
-import { useRef, useEffect, useCallback, useMemo } from "react";
+import { useRef, useEffect, useCallback, useMemo, useState } from "react";
 import type { VoicePcm } from "@/lib/types";
 import { computePeaks } from "@/lib/audio/waveformOps";
 
 export interface WaveformCanvasProps {
+  trackColor?: "lavender" | "pink" | "mint";
+  stretchMode?: boolean;
+  onStretch?: (ratio: number) => void;
   pcm: VoicePcm;
   bpm: number;
   beatsPerBar: number;
@@ -19,6 +22,9 @@ export interface WaveformCanvasProps {
 }
 
 export default function WaveformCanvas({
+  trackColor,
+  stretchMode = false,
+  onStretch,
   pcm,
   bpm,
   beatsPerBar,
@@ -34,9 +40,19 @@ export default function WaveformCanvas({
   const dragStart = useRef<number | null>(null);
   const dragStartPx = useRef<number>(0);
 
+  const [stretchRatio, setStretchRatio] = useState<number | null>(null);
+  const stretchDrag = useRef<{ x: number; pointer: number; ratio: number } | null>(null);
+  const selectionHandle = useRef<{ edge: "start" | "end"; pointer: number } | null>(null);
   const totalSamples = pcm.channels[0].length;
   const duration = totalSamples / pcm.sampleRate;
-  const logicalWidth = Math.ceil(duration * pixelsPerSecond);
+  const rangeStart = selection?.startSec ?? 0;
+  const rangeEnd = selection?.endSec ?? duration;
+  const rangeDuration = rangeEnd - rangeStart;
+  const ratio = stretchRatio ?? 1;
+  const previewEnd = rangeStart + rangeDuration * ratio;
+  const previewDuration = duration + rangeDuration * (ratio - 1);
+  const sourceWidth = Math.ceil(duration * pixelsPerSecond);
+  const logicalWidth = Math.ceil(previewDuration * pixelsPerSecond);
   const logicalHeight = 120;
 
   const secToX = useCallback(
@@ -52,8 +68,8 @@ export default function WaveformCanvas({
   // Peak calculation scans the PCM data. Cache it so moving the playhead only
   // redraws the canvas instead of rescanning the entire recording for every track.
   const peaks = useMemo(
-    () => computePeaks(pcm.channels[0], 0, totalSamples, logicalWidth),
-    [pcm, totalSamples, logicalWidth]
+    () => computePeaks(pcm.channels[0], 0, totalSamples, sourceWidth),
+    [pcm, totalSamples, sourceWidth]
   );
 
   // Draw
@@ -72,13 +88,15 @@ export default function WaveformCanvas({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const colors = getComputedStyle(canvas);
     const ink = colors.getPropertyValue("--ink").trim();
-    const lavender = colors.getPropertyValue("--lavender").trim();
+    const lavender = colors.getPropertyValue(`--${trackColor ?? "lavender"}`).trim();
     const lime = colors.getPropertyValue("--lime").trim();
     const grid = colors.getPropertyValue("--text-muted").trim();
 
     // 1. Background
-    ctx.fillStyle = ink;
+    ctx.fillStyle = trackColor ? colors.getPropertyValue("--cream").trim() : ink;
     ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+
+    if (trackColor) { ctx.fillStyle = lavender; ctx.fillRect(0, 8, logicalWidth, logicalHeight - 16);  }
 
     // 2. Beat grid
     const beatDuration = 60 / bpm;
@@ -88,7 +106,7 @@ export default function WaveformCanvas({
       const x = secToX(sec);
       const beatIndex = Math.round((sec - firstBeatSec) / beatDuration);
       const isDownbeat = beatIndex % beatsPerBar === 0;
-      ctx.strokeStyle = isDownbeat ? lavender : grid;
+      ctx.strokeStyle = trackColor ? "#e5ddd4" : isDownbeat ? lavender : grid;
       ctx.lineWidth = isDownbeat ? 1 : 0.5;
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -96,12 +114,18 @@ export default function WaveformCanvas({
       ctx.stroke();
     }
 
+
+
     // 3. Waveform
-    ctx.strokeStyle = lavender;
+    ctx.strokeStyle = trackColor ? "#51475c" : lavender;
     ctx.lineWidth = 1;
     for (let px = 0; px < logicalWidth; px++) {
-      const yMin = mid - peaks.max[px] * mid;
-      const yMax = mid - peaks.min[px] * mid;
+      const time = px / pixelsPerSecond;
+      const sourceTime = time < rangeStart ? time : time < previewEnd
+        ? rangeStart + (time - rangeStart) / ratio : time - rangeDuration * (ratio - 1);
+      const sourcePx = Math.min(sourceWidth - 1, Math.max(0, Math.floor(sourceTime * pixelsPerSecond)));
+      const yMin = mid - peaks.max[sourcePx] * mid;
+      const yMax = mid - peaks.min[sourcePx] * mid;
       ctx.beginPath();
       ctx.moveTo(px + 0.5, yMin);
       ctx.lineTo(px + 0.5, yMax);
@@ -111,7 +135,7 @@ export default function WaveformCanvas({
     // 4. Selection overlay
     if (selection) {
       const x0 = secToX(selection.startSec);
-      const x1 = secToX(selection.endSec);
+      const x1 = secToX(previewEnd);
       ctx.fillStyle = lavender;
       ctx.globalAlpha = .15;
       ctx.fillRect(x0, 0, x1 - x0, logicalHeight);
@@ -136,12 +160,12 @@ export default function WaveformCanvas({
       ctx.lineTo(x, logicalHeight);
       ctx.stroke();
     }
-  }, [bpm, beatsPerBar, beatOffset, selection, logicalWidth, duration, secToX, currentTime, peaks]);
+  }, [bpm, beatsPerBar, beatOffset, selection, logicalWidth, duration, secToX, currentTime, peaks, pixelsPerSecond, rangeStart, rangeDuration, previewEnd, ratio, sourceWidth, trackColor]);
 
   // Pointer events for selection drag
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
-      if (disabled) return;
+      if (disabled || stretchMode) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
       canvas.setPointerCapture(e.pointerId);
@@ -153,7 +177,7 @@ export default function WaveformCanvas({
       dragStart.current = xToSec(x);
       dragStartPx.current = e.clientX;
     },
-    [disabled, xToSec]
+    [disabled, stretchMode, xToSec]
   );
 
   const onPointerMove = useCallback(
@@ -184,15 +208,96 @@ export default function WaveformCanvas({
     [onSelectionChange]
   );
 
+  function selectionEdgeDown(e: React.PointerEvent<HTMLButtonElement>) {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    selectionHandle.current = { edge: e.currentTarget.dataset.edge as "start" | "end", pointer: e.pointerId };
+  }
+
+  function selectionEdgeMove(e: React.PointerEvent<HTMLButtonElement>) {
+    const drag = selectionHandle.current;
+    if (!drag || drag.pointer !== e.pointerId || !canvasRef.current || !selection) return;
+    const time = xToSec(e.clientX - canvasRef.current.getBoundingClientRect().left);
+    onSelectionChange(drag.edge === "start" ? { ...selection, startSec: Math.min(selection.endSec - .02, time) }
+      : { ...selection, endSec: Math.max(selection.startSec + .02, time) });
+  }
+
+  function selectionEdgeEnd() { selectionHandle.current = null; }
+
   const canvasEl = (
-    <canvas
-      ref={canvasRef}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      className="block cursor-crosshair"
-      style={{ width: logicalWidth, height: logicalHeight }}
-    />
+    <div className="relative" style={{ width: logicalWidth, height: logicalHeight }}>
+      <canvas
+        ref={canvasRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={() => { dragStart.current = null; }}
+        className={stretchMode ? "block" : "block cursor-crosshair"}
+        style={{ width: logicalWidth, height: logicalHeight, touchAction: disabled ? "pan-x" : "none" }}
+      />
+      {selection && !stretchMode && !disabled && (["start", "end"] as const).map(edge => <button
+        key={edge} type="button" className="wave-selection-handle"
+        aria-label={`Adjust selection ${edge}`}
+        style={{ left: Math.max(0, (edge === "start" ? selection.startSec : selection.endSec) * pixelsPerSecond - 14) }}
+        onKeyDown={e => {
+          if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+          e.preventDefault();
+          const delta = (e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 60 / bpm : .05);
+          const value = (edge === "start" ? selection.startSec : selection.endSec) + delta;
+          onSelectionChange(edge === "start" ? { ...selection, startSec: Math.max(0, Math.min(selection.endSec - .02, value)) }
+            : { ...selection, endSec: Math.min(duration, Math.max(selection.startSec + .02, value)) });
+        }}
+        data-edge={edge}
+        onPointerDown={selectionEdgeDown}
+        onPointerMove={selectionEdgeMove}
+        onPointerUp={selectionEdgeEnd}
+        onPointerCancel={selectionEdgeEnd}
+        onLostPointerCapture={selectionEdgeEnd}
+      ><span aria-hidden="true" /></button>)}
+      {stretchMode && rangeDuration > .02 && <>
+        <span className="stretch-duration" style={{ left: rangeStart * pixelsPerSecond + 6 }}>
+          {(rangeDuration * ratio).toFixed(2)}s
+        </span>
+        <button
+          type="button"
+          className="stretch-edge"
+          style={{ left: Math.max(0, previewEnd * pixelsPerSecond - 22) }}
+          disabled={disabled}
+          aria-label="Drag to stretch selected audio; arrow keys adjust by one beat"
+          onKeyDown={e => {
+            if (disabled || !onStretch || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+            e.preventDefault();
+            const next = Math.max(.5, Math.min(2, 1 + (e.key === "ArrowRight" ? 1 : -1) * (60 / bpm) / rangeDuration));
+            void onStretch(next);
+          }}
+          onPointerDown={e => {
+            if (disabled || (e.pointerType === "mouse" && e.button !== 0)) return;
+            e.stopPropagation();
+            e.currentTarget.setPointerCapture(e.pointerId);
+            stretchDrag.current = { x: e.clientX, pointer: e.pointerId, ratio: 1 };
+          }}
+          onPointerMove={e => {
+            const drag = stretchDrag.current;
+            if (!drag || drag.pointer !== e.pointerId) return;
+            const end = rangeEnd + (e.clientX - drag.x) / pixelsPerSecond;
+            const beat = 60 / bpm;
+            const snapped = beatOffset + Math.round((end - beatOffset) / beat) * beat;
+            const target = Math.abs(snapped - end) * pixelsPerSecond <= 8 ? snapped : end;
+            drag.ratio = Math.max(.5, Math.min(2, (target - rangeStart) / rangeDuration));
+            setStretchRatio(drag.ratio);
+          }}
+          onPointerUp={e => {
+            const drag = stretchDrag.current;
+            if (!drag || drag.pointer !== e.pointerId) return;
+            stretchDrag.current = null;
+            setStretchRatio(null);
+            if (Math.abs(e.clientX - drag.x) >= 3 && Math.abs(drag.ratio - 1) > .001) void onStretch?.(drag.ratio);
+          }}
+          onPointerCancel={() => { stretchDrag.current = null; setStretchRatio(null); }}
+          onLostPointerCapture={() => { stretchDrag.current = null; setStretchRatio(null); }}
+        >↔</button>
+      </>}
+    </div>
   );
 
   if (bare) return canvasEl;
