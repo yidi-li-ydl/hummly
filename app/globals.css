@@ -331,7 +331,7 @@ h1[tabindex="-1"]:focus { outline: none; }
 .mix-music-note { position: absolute; font-family: var(--font-display), sans-serif; color: var(--text-secondary); font-size: 30px; transform: rotate(-12deg); }
 .mix-music-note--one { left: 13px; top: 26px; color: #8c71b3; }
 .mix-music-note--two { right: 5px; top: 67px; color: #93677e; transform: rotate(15deg); font-size: 25px; }
-.mix-hero.is-playing .mix-hero-hummi { animation: mix-hummi-sway calc(var(--song-beat) * 2) ease-in-out infinite; }
+.mix-hero.is-playing .mix-hero-hummi:not(.mix-hero-hummi--dj) { animation: mix-hummi-sway calc(var(--song-beat) * 2) ease-in-out infinite; }
 .mix-hero.is-playing .mix-music-note { animation: mix-note-float calc(var(--song-beat) * 4) ease-in-out infinite; }
 @keyframes mix-hummi-sway { 0%, 100% { transform: rotate(-3deg) translateY(0); } 50% { transform: rotate(3deg) translateY(-3px); } }
 @keyframes mix-note-float { 50% { translate: 0 -5px; } }
@@ -395,3 +395,54 @@ h1[tabindex="-1"]:focus { outline: none; }
 .wave-selection-handle span { height: 34px; width: 7px; border: 1px solid var(--ink); border-radius: 999px; background: var(--cream); }
 @media (min-width: 600px) { .mix-home { gap: 18px; } .mix-hero { height: 178px; } .fine-tune-content { padding-inline: 32px; } }
 @media (prefers-reduced-motion: reduce) { .mix-hero.is-playing .mix-hero-hummi, .mix-hero.is-playing .mix-music-note { animation: none; } }
+
+/* Local song library */
+.library-loading { margin: 100px auto; color: var(--text-muted); font-size: 14px; }
+.library-local-tag { font-size: 11px; color: var(--text-muted); padding: 6px 10px; border-radius: 999px; background: var(--surface-soft); }
+.songs-library { display: flex; flex-direction: column; gap: 24px; padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+.songs-heading { display: flex; justify-content: space-between; align-items: center; }
+.songs-heading h1 { font-size: 32px; }
+.songs-heading p { font-size: 14px; color: var(--text-secondary); margin-top: 8px; }
+.songs-count { color: var(--text-muted); font-size: 14px; }
+.songs-list { display: flex; flex-direction: column; gap: 16px; }
+.song-card { background: #f6f0e8; border-radius: 22px; padding: 14px; }
+.song-open { width: 100%; display: flex; align-items: center; gap: 13px; min-width: 0; text-align: left; }
+.song-art { width: 60px; height: 68px; border-radius: 18px; background: var(--lavender); flex-shrink: 0; display: grid; place-items: center; position: relative; overflow: hidden; }
+.song-art > svg { width: 26px; height: 26px; transform: rotate(-10deg); }
+.song-art > span { position: absolute; right: 7px; top: 4px; font-size: 17px; opacity: .4; transform: rotate(20deg); }
+.song-card--1 .song-art { background: var(--pink); }
+.song-card--2 .song-art { background: var(--mint); }
+.song-copy { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; }
+.song-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 600; }
+.song-copy > span { font-size: 11px; color: var(--text-secondary); }
+.song-copy .song-date { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-muted); }
+.song-stage { font-size: 10px; padding: 2px 6px; background: var(--cream); border-radius: 6px; color: var(--text-secondary); }
+.song-arrow { flex-shrink: 0; width: 18px; height: 18px; }
+.song-actions { display: flex; gap: 18px; justify-content: flex-end; margin-top: 5px; }
+.song-actions button { min-height: 44px; font-size: 11px; color: var(--text-secondary); padding: 5px; }
+.song-actions button:last-child { color: #86534d; }
+.song-open:disabled, .song-actions button:disabled { opacity: .5; }
+.songs-local-note { display: flex; justify-content: center; gap: 6px; align-items: center; font-size: 11px; color: var(--text-muted); text-align: center; }
+.songs-local-note svg { width: 13px; height: 13px; }
+.songs-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; padding-block: 20px; }
+.songs-empty h2 { font-size: 22px; max-width: 260px; }
+.songs-empty p { font-size: 13px; color: var(--text-secondary); }
+.project-save-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: -16px 0 16px; min-height: 36px; font-size: 11px; color: var(--text-muted); }
+.project-save-bar button { padding: 6px 0; color: var(--text-secondary); min-height: 36px; }
+.project-save-bar button:disabled { opacity: .4; }
+.mix-song-name { display: flex; align-items: center; justify-content: center; gap: 8px; width: min(260px, 100%); color: var(--text-muted); }
+.mix-song-name input { width: 100%; min-width: 0; font-size: 14px; font-weight: 500; color: var(--ink); text-align: center; padding: 7px 0; border-bottom: 1px dashed var(--border); background: transparent; border-radius: 0; }
+.mix-song-name > span:last-child { font-size: 16px; }
+.song-rename-dialog { margin: auto; width: min(340px, calc(100% - 40px)); background: var(--cream); color: var(--ink); border: 0; border-radius: 24px; padding: 24px; }
+.song-rename-dialog::backdrop { background: #241b3259; }
+.song-rename-dialog h2 { font-size: 24px; margin-bottom: 18px; }
+.song-rename-dialog label { display: block; font-size: 12px; margin-bottom: 6px; color: var(--text-secondary); }
+.song-rename-dialog input { width: 100%; padding: 12px; background: var(--surface-soft); border-radius: 12px; font-size: 16px; }
+.song-rename-dialog form > div { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+.song-rename-dialog form button { padding: 10px 14px; min-height: 44px; border-radius: 999px; font-size: 13px; }
+.song-rename-dialog form button[type="submit"] { background: var(--lime); font-weight: 600; }
+.song-rename-dialog form button:disabled { opacity: .4; }
+.mix-export.secondary-button { min-height: 44px; padding: 6px 14px; background: transparent; color: var(--text-secondary); font-size: 13px; }
+.mix-export + .mix-start-over { margin-top: -12px; }
+.save-song-hint { font-size: 13px; line-height: 1.5; color: var(--text-secondary); margin: -6px 0 18px; }
+.save-song-error { margin-top: 12px; color: #86534d; font-size: 12px; }

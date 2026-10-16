@@ -28,11 +28,12 @@ function formatTime(seconds: number): string {
 }
 
 interface Props {
+  onBusyChange?: (busy: boolean) => void;
   onComplete: (pcm: VoicePcm, readings: PitchReading[]) => void;
   analyzing?: boolean;
 }
 
-export default function RecordStep({ onComplete, analyzing = false }: Props) {
+export default function RecordStep({ onComplete, analyzing = false, onBusyChange }: Props) {
   const [phase, setPhase] = useState<"idle" | "requesting" | "recording" | "uploading">("idle");
   const [elapsed, setElapsed] = useState(0);
   const [currentNote, setCurrentNote] = useState<string | null>(null);
@@ -46,6 +47,9 @@ export default function RecordStep({ onComplete, analyzing = false }: Props) {
   const stopPitchRef = useRef<(() => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => { onBusyChange?.(phase !== "idle" || analyzing); }, [phase, analyzing, onBusyChange]);
+  useEffect(() => () => { onBusyChange?.(false); }, [onBusyChange]);
 
   const cleanup = useCallback(() => {
     if (stopPitchRef.current) {

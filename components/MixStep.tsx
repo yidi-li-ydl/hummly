@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { renderMix, downloadWav } from "@/lib/audio/mixer";
 import { snapToGrid } from "@/lib/audio/noteQuantizer";
-import type { ChordInstrument, ChordPattern, DrumKit, MelodyVoice, MixOffsets, MixVolumes, QuantizedNote, ChordProgression, DrumStyle, KeyResult, PitchReading, VoiceEQ, VoicePcm } from "@/lib/types";
+import type { MixSnapshot, ChordInstrument, ChordPattern, DrumKit, MelodyVoice, MixOffsets, MixVolumes, QuantizedNote, ChordProgression, DrumStyle, KeyResult, PitchReading, VoiceEQ, VoicePcm } from "@/lib/types";
 import MultiTrackEditor from "./MultiTrackEditor";
 import Hummi from "./Hummi";
 import Icon from "./Icon";
@@ -15,6 +15,13 @@ import MiniMixer, { MIX_TRACKS, type MixTrackKey } from "./MiniMixer";
 import { renderTrackMix } from "@/lib/audio/renderTrackMix";
 
 interface Props {
+  savedMix?: MixSnapshot | null;
+  onMixChange?: (snapshot: MixSnapshot) => void;
+  onBusyChange?: (busy: boolean) => void;
+  songTitle?: string;
+  onTitleChange?: (title: string) => void;
+  hasLocalProject?: boolean;
+  onSaveToLibrary?: (title: string) => Promise<void>;
   notes: QuantizedNote[];
   chords: ChordProgression | null;
   chordsB: ChordProgression | null;
@@ -53,7 +60,12 @@ function voicePcmToAudioBuffer(pcm: VoicePcm): AudioBuffer {
   return buf;
 }
 
-export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, chordPattern, drumKit, beatOffset, onStartOver }: Props) {
+export default function MixStep({ savedMix, onMixChange, onBusyChange, songTitle, onTitleChange, hasLocalProject, onSaveToLibrary, notes, chords, chordsB, drums, bpm, beatsPerBar, detectedKey, voicePcm, pitchReadings, chordInstrument, chordPattern, drumKit, beatOffset, onStartOver }: Props) {
+  const saveDialog = useRef<HTMLDialogElement>(null);
+  const [saveName, setSaveName] = useState("");
+  const [savingSong, setSavingSong] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [editorBusy, setEditorBusy] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [status, setStatus] = useState<"rendering" | "ready" | "error">("rendering");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -61,11 +73,11 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const hasRendered = useRef(false);
-  const [editedPcm, setEditedPcm] = useState<VoicePcm | null>(null);
+  const [editedPcm, setEditedPcm] = useState<VoicePcm | null>(savedMix?.editedVoicePcm ?? null);
   const effectivePcm = editedPcm ?? voicePcm;
 
-  const [editedChordsPcm, setEditedChordsPcm] = useState<VoicePcm | null>(null);
-  const [editedDrumsPcm, setEditedDrumsPcm] = useState<VoicePcm | null>(null);
+  const [editedChordsPcm, setEditedChordsPcm] = useState<VoicePcm | null>(savedMix?.edited.chords ? savedMix.tracks.chords : null);
+  const [editedDrumsPcm, setEditedDrumsPcm] = useState<VoicePcm | null>(savedMix?.edited.drums ? savedMix.tracks.drums : null);
 
   // 3-track AudioBuffers
   const [voiceBuffer, setVoiceBuffer] = useState<AudioBuffer | null>(null);
@@ -73,8 +85,8 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
   const [drumsBuffer, setDrumsBuffer] = useState<AudioBuffer | null>(null);
 
   // Per-track volume + mute
-  const [trackVolumes, setTrackVolumes] = useState({ voice: 1, chords: 1, drums: 1 });
-  const [trackMutes, setTrackMutes] = useState({ voice: false, chords: false, drums: false });
+  const [trackVolumes, setTrackVolumes] = useState(savedMix?.volumes ?? { voice: 1, chords: 1, drums: 1 });
+  const [trackMutes, setTrackMutes] = useState(savedMix?.mutes ?? { voice: false, chords: false, drums: false });
 
   // Web Audio playback refs
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -105,6 +117,19 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
     editedDrumsPcm ?? (drumsBuffer ? audioBufferToVoicePcm(drumsBuffer) : null),
     [editedDrumsPcm, drumsBuffer]
   );
+
+  const renderedVoicePcm = useMemo(() => voiceBuffer ? audioBufferToVoicePcm(voiceBuffer) : null, [voiceBuffer]);
+  useEffect(() => {
+    onBusyChange?.(status === "rendering" || editorBusy);
+  }, [status, editorBusy, onBusyChange]);
+  useEffect(() => {
+    if (status !== "ready" || !renderedVoicePcm) return;
+    onMixChange?.({
+      tracks: { voice: renderedVoicePcm, chords: chords ? chordsPcm : null, drums: drums ? drumsPcm : null },
+      editedVoicePcm: editedPcm, edited: { chords: !!editedChordsPcm, drums: !!editedDrumsPcm },
+      volumes: trackVolumes, mutes: trackMutes,
+    });
+  }, [status, renderedVoicePcm, chordsPcm, drumsPcm, editedPcm, editedChordsPcm, editedDrumsPcm, trackVolumes, trackMutes, chords, drums, onMixChange]);
 
   const renderThreeTracks = useCallback(async (pcm: VoicePcm | undefined, offsets: MixOffsets) => {
     const common = [
@@ -140,8 +165,18 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
     if (hasRendered.current) return;
     hasRendered.current = true;
 
+
     async function render() {
       try {
+        if (savedMix?.tracks.voice) {
+          // Restore cached audio asynchronously, alongside the existing render path.
+          await Promise.resolve();
+          setVoiceBuffer(voicePcmToAudioBuffer(savedMix.tracks.voice));
+          setChordsBuffer(savedMix.tracks.chords ? voicePcmToAudioBuffer(savedMix.tracks.chords) : null);
+          setDrumsBuffer(savedMix.tracks.drums ? voicePcmToAudioBuffer(savedMix.tracks.drums) : null);
+          setStatus("ready");
+          return;
+        }
         const tracks = await renderThreeTracks(voicePcm ?? undefined, mixOffsets);
         setVoiceBuffer(tracks.voiceBuf);
         setChordsBuffer(tracks.chordsBuf);
@@ -298,7 +333,18 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
   };
 
   const requestStartOver = () => {
-    if (window.confirm("Start a new song? Your current song and edits will be cleared. Download it first if you’d like to keep it.")) onStartOver();
+    if (window.confirm(hasLocalProject ? "Start a new song? Your current song will stay in My songs." : "Start a new song? Your current song and edits will be cleared. Download it first if you’d like to keep it.")) onStartOver();
+  };
+  const confirmSave = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!onSaveToLibrary || !saveName.trim() || savingSong) return;
+    setSavingSong(true); setSaveError(null);
+    try {
+      await onSaveToLibrary(saveName);
+      saveDialog.current?.close();
+    } catch {
+      setSaveError("Couldn’t save your song on this device. Your work is still here—please try again.");
+    } finally { setSavingSong(false); }
   };
 
   if (status === "rendering" && !voiceBuffer) {
@@ -351,9 +397,10 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
         </header>
         <div className={`mix-hero${isPlaying ? " is-playing" : ""}`} style={{ "--song-beat": `${60 / bpm}s` } as React.CSSProperties}>
           <span className="mix-music-note mix-music-note--one" aria-hidden="true">♪</span>
-          <Hummi state="headphones" size="medium" animated={false} className="mix-hero-hummi" priority />
+          <Hummi state="dj" size="medium" animated className="mix-hero-hummi mix-hero-hummi--dj" priority />
           <span className="mix-music-note mix-music-note--two" aria-hidden="true">♫</span>
         </div>
+        {onTitleChange && <label className="mix-song-name"><span className="sr-only">Song name</span><input aria-label="Song name" value={songTitle ?? ""} placeholder="Name your song" maxLength={80} onChange={e => onTitleChange(e.target.value)} onBlur={e => { if (!e.target.value.trim()) onTitleChange("Untitled song"); }} /><span aria-hidden="true">✎</span></label>}
         <MixPlayer {...playerProps} />
         {errorMsg && <p className="recovery-message" role="alert">{errorMsg}</p>}
         <MiniMixer available={availableTracks.map(track => track.key)} volumes={trackVolumes} mutes={trackMutes}
@@ -363,18 +410,35 @@ export default function MixStep({ notes, chords, chordsB, drums, bpm, beatsPerBa
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="m8 8 12 12M8 16 20 4"/></svg>
           <span>Fine-tune audio</span><Icon name="arrow" />
         </button>
-        <ActionButton onClick={handleDownload} disabled={exporting || status !== "ready"} className="mix-download">
+        {onSaveToLibrary && <ActionButton className="mix-download" disabled={status !== "ready" || editorBusy || savingSong} onClick={() => {
+          setSaveName(songTitle || "Untitled song"); setSaveError(null); saveDialog.current?.showModal();
+        }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 4h14v17l-7-4-7 4V4Z" /><path d="M9 8h6" /></svg>
+          Save to My songs
+        </ActionButton>}
+        <SecondaryButton onClick={handleDownload} disabled={exporting || status !== "ready"} className="mix-export">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4" /></svg>
-          {exporting ? "Preparing WAV…" : "Download WAV"}
-        </ActionButton>
+          {exporting ? "Preparing WAV…" : "Export WAV"}
+        </SecondaryButton>
         {exportError && <p className="recovery-message" role="alert">{exportError}</p>}
         <button type="button" className="mix-start-over" onClick={requestStartOver}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 4v5h5M4.6 9a8 8 0 1 1-.6 6" /></svg>Start over
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>Create another song
         </button>
       </div>
+      <dialog ref={saveDialog} className="song-rename-dialog" aria-labelledby="save-song-title" onCancel={event => { if (savingSong) event.preventDefault(); }}>
+        <form onSubmit={confirmSave}>
+          <h2 id="save-song-title">Give your song a name</h2>
+          <p className="save-song-hint">Keep it in My songs. Come back and make it yours anytime.</p>
+          <label htmlFor="save-song-name">Song name</label>
+          <input id="save-song-name" maxLength={80} value={saveName} disabled={savingSong} onChange={event => setSaveName(event.target.value)} onFocus={event => event.target.select()} autoFocus />
+          {saveError && <p className="save-song-error" role="alert">{saveError}</p>}
+          <div><button type="button" disabled={savingSong} onClick={() => saveDialog.current?.close()}>Cancel</button><button type="submit" disabled={!saveName.trim() || savingSong}>{savingSong ? "Saving…" : "Save song"}</button></div>
+        </form>
+      </dialog>
       <FineTuneAudioView open={editorOpen} onClose={() => setEditorOpen(false)} busy={status === "rendering"}
         player={<MixPlayer {...playerProps} compact />}>
         {effectivePcm && <MultiTrackEditor
+          onBusyChange={setEditorBusy}
           tracks={[
             { id: "voice", label: "Your hum", icon: <Icon name="mic" />, pcm: effectivePcm, onPcmChange: handlePcmChange },
             ...(chords && chordsPcm ? [{ id: "chords" as const, label: "Chords", icon: <Icon name="note" />, pcm: chordsPcm,

@@ -89,6 +89,19 @@ export interface VoicePcm {
   sampleRate: number;
 }
 
+export type AudioTrackId = "voice" | "chords" | "drums";
+export type TrackVolumes = Record<AudioTrackId, number>;
+export type TrackMutes = Record<AudioTrackId, boolean>;
+
+/** Serializable checkpoint: current sound, not a new render of the recipe. */
+export interface MixSnapshot {
+  tracks: Record<AudioTrackId, VoicePcm | null>;
+  editedVoicePcm: VoicePcm | null;
+  edited: { chords: boolean; drums: boolean };
+  volumes: TrackVolumes;
+  mutes: TrackMutes;
+}
+
 export interface HummlyState {
   step: WizardStep;
   bpm: number;
@@ -106,6 +119,7 @@ export interface HummlyState {
   drumKit: DrumKit;
   drumOptions: DrumStyle[];
   selectedDrums: DrumStyle | null;
+  mixSnapshot: MixSnapshot | null;
   mixBuffer: AudioBuffer | null;
   chordPattern: ChordPattern | null;
   mixUrl: string | null;
@@ -113,6 +127,8 @@ export interface HummlyState {
 }
 
 export type HummlyAction =
+  | { type: "RESTORE_PROJECT"; state: HummlyState }
+  | { type: "SET_MIX_SNAPSHOT"; snapshot: MixSnapshot }
   | { type: "SET_STEP"; step: WizardStep }
   | { type: "SET_BPM"; bpm: number }
   | { type: "SET_BEATS_PER_BAR"; beatsPerBar: number }

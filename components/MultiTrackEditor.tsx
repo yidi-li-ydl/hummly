@@ -19,6 +19,7 @@ interface TrackData {
 interface MultiTrackEditorProps {
   tracks: TrackData[];
   disabled?: boolean;
+  onBusyChange?: (busy: boolean) => void;
   bpm: number;
   beatsPerBar: number;
   beatOffset: number;
@@ -42,6 +43,7 @@ function initTrackState(pcm: VoicePcm): TrackState {
 export default function MultiTrackEditor({
   tracks,
   disabled = false,
+  onBusyChange,
   bpm,
   beatsPerBar,
   beatOffset,
@@ -132,7 +134,9 @@ export default function MultiTrackEditor({
   );
 
   const activeState = trackStates[activeTrackId];
-  const locked = disabled || Object.values(trackStates).some(state => state.isProcessing);
+  const processing = Object.values(trackStates).some(state => state.isProcessing);
+  const locked = disabled || processing;
+  useEffect(() => { onBusyChange?.(processing); }, [processing, onBusyChange]);
   const hasSelection = !!activeState?.selection && activeState.selection.endSec - activeState.selection.startSec >= .02;
   const canCut = hasSelection && !!activeState?.selection &&
     activeState.currentPcm.channels[0].length / activeState.currentPcm.sampleRate -
